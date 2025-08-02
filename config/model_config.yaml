@@ -1,0 +1,105 @@
+# GDM-Net Model Configuration
+
+# Random seed for reproducibility
+seed: 42
+
+# Model configuration
+model:
+  bert_model_name: "bert-base-uncased"
+  hidden_size: 768
+  num_entities: 10
+  num_relations: 20
+  num_classes: 5
+  gnn_type: "rgcn"  # Options: "rgcn", "gat"
+  num_gnn_layers: 2
+  num_reasoning_hops: 3
+  fusion_method: "gate"  # Options: "concat", "add", "gate", "attention"
+  learning_rate: 2e-5
+  dropout_rate: 0.1
+
+# Data configuration
+data:
+  train_path: "data/train.json"
+  val_path: "data/val.json"
+  test_path: "data/test.json"
+  max_length: 512
+  max_query_length: 64
+
+# Training configuration
+training:
+  max_epochs: 10
+  batch_size: 8
+  num_workers: 4
+  accelerator: "auto"  # Options: "auto", "gpu", "cpu"
+  devices: 1
+  precision: 32  # Options: 16, 32 (using 32 to avoid dtype issues)
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  val_check_interval: 1.0
+  log_every_n_steps: 50
+  checkpoint_dir: "checkpoints"
+  early_stopping: true
+  patience: 5
+
+# Logging configuration
+logging:
+  type: "tensorboard"  # Options: "tensorboard", "wandb", null
+  save_dir: "logs"
+  name: "gdmnet"
+  version: null
+
+# Advanced model configuration
+advanced:
+  # Document encoder settings
+  encoder:
+    freeze_bert: false
+    
+  # Structure extractor settings
+  extractor:
+    use_crf: false
+    entity_threshold: 0.5
+    relation_threshold: 0.5
+    
+  # Graph memory settings
+  graph_memory:
+    use_residual: true
+    pooling_method: "attention"
+    
+  # Path finder settings
+  path_finder:
+    num_paths: 5
+    attention_heads: 8
+    
+  # Graph reader settings
+  graph_reader:
+    attention_heads: 8
+    pooling_method: "attention"
+    
+  # Reasoning fusion settings
+  reasoning_fusion:
+    fusion_method: "gate"
+
+# Optimization configuration
+optimization:
+  optimizer: "adamw"
+  learning_rate: 2e-5
+  weight_decay: 0.01
+  scheduler: "cosine"
+  warmup_steps: 1000
+  max_steps: 10000
+
+# Loss weights
+loss_weights:
+  main_loss: 1.0
+  entity_loss: 0.1
+  relation_loss: 0.1
+
+# Evaluation configuration
+evaluation:
+  metrics:
+    - "accuracy"
+    - "f1"
+    - "precision"
+    - "recall"
+  save_predictions: true
+  prediction_file: "predictions.json"
