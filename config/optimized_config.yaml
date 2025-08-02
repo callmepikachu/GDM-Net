@@ -1,9 +1,9 @@
 data:
-  max_length: 256
-  max_query_length: 32
-  test_path: data/test.json
-  train_path: data/train.json
-  val_path: data/val.json
+  max_length: 512  # 增加到512以适应HotpotQA长文档
+  max_query_length: 64
+  test_path: data/hotpotqa_official_val.json
+  train_path: data/hotpotqa_official_train.json
+  val_path: data/hotpotqa_official_val.json
 logging:
   name: gdmnet-optimized
   save_dir: logs
@@ -24,7 +24,7 @@ seed: 42
 training:
   accelerator: cpu
   accumulate_grad_batches: 4
-  batch_size: 2
+  batch_size: 1  # 减少到1因为序列长度增加到512
   checkpoint_dir: checkpoints
   devices: 1
   early_stopping: true

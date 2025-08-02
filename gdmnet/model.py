@@ -350,7 +350,11 @@ class GDMNet(pl.LightningModule):
         self.log('val_acc', self.val_accuracy, prog_bar=True)
         
         return loss
-    
+
+    def test_step(self, batch, batch_idx):
+        """Test step - same as validation step."""
+        return self.validation_step(batch, batch_idx)
+
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""
         # Ensure learning rate is a float

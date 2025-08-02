@@ -1,0 +1,44 @@
+# Fast Training Configuration for HotpotQA
+# Optimized for speed while maintaining reasonable performance
+
+seed: 42
+
+model:
+  bert_model_name: "bert-base-uncased"
+  hidden_size: 768
+  num_entities: 10
+  num_relations: 15
+  num_classes: 5
+  gnn_type: "rgcn"
+  num_gnn_layers: 1  # Reduced from 2 to 1
+  num_reasoning_hops: 2  # Reduced from 3 to 2
+  fusion_method: "gate"
+  learning_rate: 5e-5  # Increased learning rate
+  dropout_rate: 0.1
+
+data:
+  train_path: "data/hotpotqa_official_train.json"
+  val_path: "data/hotpotqa_official_val.json"
+  test_path: "data/hotpotqa_official_val.json"
+  max_length: 256  # Reduced from 512 to 256
+  max_query_length: 32  # Reduced from 64 to 32
+
+training:
+  max_epochs: 3  # Reduced epochs
+  batch_size: 2  # Increased batch size
+  num_workers: 1  # Reduced workers
+  accelerator: "cpu"
+  devices: 1
+  precision: 32
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 4  # Reduced accumulation
+  val_check_interval: 0.5  # Validate twice per epoch
+  log_every_n_steps: 100  # Log less frequently
+  checkpoint_dir: "checkpoints"
+  early_stopping: true
+  patience: 2
+
+logging:
+  type: "tensorboard"
+  save_dir: "logs"
+  name: "gdmnet-fast"

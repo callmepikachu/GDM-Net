@@ -139,8 +139,14 @@ class GDMNetDataset(Dataset):
             # Process entities
             entities = []
             for entity in item.get('entities', []):
-                entity_type = entity.get('type', 'MISC')
-                entity_type_id = self.entity_types.get(entity_type, self.entity_types.get('MISC', 8))
+                entity_type = entity.get('type', 0)  # 默认为0
+
+                # 如果是整数，直接使用（确保在范围内）
+                if isinstance(entity_type, int):
+                    entity_type_id = max(0, min(entity_type, 7))  # 强制在0-7范围内
+                else:
+                    # 如果是字符串，查找映射
+                    entity_type_id = self.entity_types.get(entity_type, 0)  # 默认为0而不是8
                 
                 entities.append({
                     'span': entity['span'],
@@ -151,8 +157,14 @@ class GDMNetDataset(Dataset):
             # Process relations
             relations = []
             for relation in item.get('relations', []):
-                relation_type = relation.get('type', 'NO_RELATION')
-                relation_type_id = self.relation_types.get(relation_type, 0)
+                relation_type = relation.get('type', 0)  # 默认为0
+
+                # 如果是整数，直接使用（确保在范围内）
+                if isinstance(relation_type, int):
+                    relation_type_id = max(0, min(relation_type, 3))  # 强制在0-3范围内
+                else:
+                    # 如果是字符串，查找映射
+                    relation_type_id = self.relation_types.get(relation_type, 0)  # 默认为0
                 
                 relations.append({
                     'head': relation['head'],

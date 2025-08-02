@@ -1,0 +1,49 @@
+# GDM-Net Configuration for Official HotpotQA Dataset
+
+# Random seed for reproducibility
+seed: 42
+
+# Model configuration
+model:
+  bert_model_name: "bert-base-uncased"
+  hidden_size: 768
+  num_entities: 15
+  num_relations: 25
+  num_classes: 5
+  gnn_type: "rgcn"
+  num_gnn_layers: 2
+  num_reasoning_hops: 3
+  fusion_method: "gate"
+  learning_rate: 2e-5
+  dropout_rate: 0.1
+
+# Data configuration
+data:
+  train_path: "data/hotpotqa_official_train.json"
+  val_path: "data/hotpotqa_official_val.json"
+  test_path: "data/hotpotqa_official_val.json"
+  max_length: 512
+  max_query_length: 64
+
+# Training configuration
+training:
+  max_epochs: 5
+  batch_size: 1
+  num_workers: 2
+  accelerator: "cpu"
+  devices: 1
+  precision: 32
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 8
+  val_check_interval: 1.0
+  log_every_n_steps: 50
+  checkpoint_dir: "checkpoints"
+  early_stopping: true
+  patience: 3
+
+# Logging configuration
+logging:
+  type: "tensorboard"
+  save_dir: "logs"
+  name: "gdmnet-hotpotqa"
+  version: null
