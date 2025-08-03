@@ -5,33 +5,33 @@ seed: 42
 
 model:
   bert_model_name: "bert-base-uncased"
-  hidden_size: 768
+  hidden_size: 512  # 减少隐藏层大小
   num_entities: 8
   num_relations: 4
   num_classes: 5
   gnn_type: "rgcn"
-  num_gnn_layers: 2
-  num_reasoning_hops: 3
+  num_gnn_layers: 1  # 减少GNN层数
+  num_reasoning_hops: 2  # 减少推理跳数
   fusion_method: "gate"
-  learning_rate: 2e-5
+  learning_rate: 3e-5  # 稍微增加学习率补偿模型容量减少
   dropout_rate: 0.1
 
 data:
   train_path: "data/hotpotqa_official_train.json"
   val_path: "data/hotpotqa_official_val.json"
   test_path: "data/hotpotqa_official_val.json"
-  max_length: 512  # 保持512以处理长文档
-  max_query_length: 64
+  max_length: 128  # 进一步减少序列长度
+  max_query_length: 32
 
 training:
   max_epochs: 5
-  batch_size: 4  # 适应GPU内存和长文档
-  num_workers: 2
+  batch_size: 1  # 最小批次大小以节省GPU内存
+  num_workers: 0  # 禁用多进程以节省内存
   accelerator: "gpu"
   devices: 1
-  precision: 16  # 混合精度节省内存
+  precision: 32  # 使用32位精度避免T4 GPU兼容性问题
   gradient_clip_val: 1.0
-  accumulate_grad_batches: 2  # 等效批次大小8
+  accumulate_grad_batches: 8  # 等效批次大小8
   val_check_interval: 0.25  # 每1/4 epoch验证一次
   log_every_n_steps: 100
   checkpoint_dir: "checkpoints"

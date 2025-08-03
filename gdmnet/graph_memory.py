@@ -246,7 +246,8 @@ class GraphWriter(nn.Module):
                 # Create a dummy node if no entities
                 dummy_node = torch.zeros(1, self.node_dim)
                 all_node_features.append(dummy_node)
-                all_batch_indices.append(torch.tensor([b]))
+                device = next(self.parameters()).device
+                all_batch_indices.append(torch.tensor([b], device=device))
                 node_offset += 1
                 continue
             
@@ -296,7 +297,9 @@ class GraphWriter(nn.Module):
             
             # Add entity type embedding
             entity_type = entity.get('type', 0)
-            type_emb = self.entity_type_embedding(torch.tensor(entity_type))
+            # 确保张量在正确的设备上
+            device = next(self.parameters()).device
+            type_emb = self.entity_type_embedding(torch.tensor(entity_type, device=device))
             
             # Add position encoding
             pos_emb = self.position_encoding[i % self.max_nodes]
@@ -337,11 +340,14 @@ class GraphWriter(nn.Module):
             edge_indices.append([tail_idx, head_idx])
             edge_types.append(rel_type)
         
+        # 确保所有张量在正确的设备上
+        device = next(self.parameters()).device
+
         if edge_indices:
-            edge_index = torch.tensor(edge_indices).t().contiguous()  # [2, num_edges]
-            edge_type = torch.tensor(edge_types, dtype=torch.long)  # [num_edges]
+            edge_index = torch.tensor(edge_indices, device=device).t().contiguous()  # [2, num_edges]
+            edge_type = torch.tensor(edge_types, dtype=torch.long, device=device)  # [num_edges]
         else:
-            edge_index = torch.empty(2, 0, dtype=torch.long)
-            edge_type = torch.empty(0, dtype=torch.long)
+            edge_index = torch.empty(2, 0, dtype=torch.long, device=device)
+            edge_type = torch.empty(0, dtype=torch.long, device=device)
         
         return edge_index, edge_type

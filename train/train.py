@@ -13,6 +13,18 @@ from typing import Dict, Any, Optional
 
 import torch
 import pytorch_lightning as pl
+
+# 禁用自动混合精度以避免T4 GPU兼容性问题
+torch.backends.cudnn.allow_tf32 = False
+torch.backends.cuda.matmul.allow_tf32 = False
+
+# GPU内存优化
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    # 设置内存分配策略
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:64'
+    # 启用内存映射
+    torch.cuda.set_per_process_memory_fraction(0.8)  # 限制使用80%的GPU内存
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 import wandb
@@ -132,6 +144,23 @@ def train_model(config: Dict[str, Any]) -> GDMNet:
     trainer_config.pop('num_workers', None)
     trainer_config.pop('batch_size', None)
     
+    # 强制禁用混合精度以避免T4 GPU兼容性问题
+    trainer_config['precision'] = 32
+
+    # 多GPU支持配置
+    num_gpus = torch.cuda.device_count()
+    if num_gpus > 1:
+        print(f"🚀 检测到 {num_gpus} 个GPU，启用多GPU训练")
+        trainer_config['devices'] = num_gpus
+        trainer_config['strategy'] = 'ddp'  # 分布式数据并行
+        # 调整批次大小以适应多GPU
+        original_batch_size = config['training'].get('batch_size', 1)
+        effective_batch_size = original_batch_size * num_gpus
+        print(f"📊 多GPU批次大小: 每GPU {original_batch_size} → 总计 {effective_batch_size}")
+    else:
+        print(f"🔧 使用单GPU训练")
+        trainer_config['devices'] = 1
+
     trainer = pl.Trainer(
         callbacks=callbacks,
         logger=logger,
@@ -193,7 +222,33 @@ def main():
     parser.add_argument('--create_synthetic', action='store_true', help='Create synthetic dataset')
     
     args = parser.parse_args()
-    
+
+    print("Starting GDM-Net training...")
+
+    # 检查GPU设置
+    print("🔍 GPU环境检查:")
+    print("=" * 40)
+
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        print(f"✅ 检测到 {num_gpus} 个GPU")
+
+        total_memory = 0
+        for i in range(num_gpus):
+            gpu_name = torch.cuda.get_device_name(i)
+            gpu_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3
+            total_memory += gpu_memory
+            print(f"  GPU {i}: {gpu_name} ({gpu_memory:.1f} GB)")
+
+        print(f"📊 总GPU内存: {total_memory:.1f} GB")
+
+        if num_gpus > 1:
+            print(f"🚀 支持多GPU训练，当前配置将自动适配")
+        else:
+            print(f"🔧 单GPU训练模式")
+    else:
+        print("❌ CUDA不可用，将使用CPU训练")
+
     # Load configuration
     config = load_config(args.config)
     

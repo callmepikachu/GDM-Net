@@ -165,11 +165,14 @@ class PathFinder(nn.Module):
                     batch_similarities = similarities[batch_mask, b]
                     _, top_indices = torch.topk(batch_similarities, min(self.num_paths, batch_mask.sum().item()))
                     batch_node_indices = torch.where(batch_mask)[0]
-                    start_nodes.extend(batch_node_indices[top_indices].tolist())
+                    # 确保索引在同一设备上，然后移到CPU进行tolist()
+                    top_indices = top_indices.to(batch_node_indices.device)
+                    start_nodes.extend(batch_node_indices[top_indices].cpu().tolist())
         else:
             # Single graph
             _, top_indices = torch.topk(similarities.squeeze(-1), min(self.num_paths, node_features.size(0)))
-            start_nodes = top_indices.tolist()
+            # 确保在CPU上进行tolist()操作
+            start_nodes = top_indices.cpu().tolist()
         
         return start_nodes
     

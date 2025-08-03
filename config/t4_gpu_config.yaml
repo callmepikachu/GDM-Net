@@ -1,0 +1,44 @@
+# T4 GPU Optimized Configuration
+# 专门针对Google Colab T4 GPU优化的配置
+
+seed: 42
+
+model:
+  bert_model_name: "bert-base-uncased"
+  hidden_size: 768
+  num_entities: 9  # 根据数据集调整
+  num_relations: 10
+  num_classes: 5
+  gnn_type: "rgcn"
+  num_gnn_layers: 2
+  num_reasoning_hops: 3
+  fusion_method: "gate"
+  learning_rate: 2e-5
+  dropout_rate: 0.1
+
+data:
+  train_path: "data/hotpotqa_official_train.json"
+  val_path: "data/hotpotqa_official_val.json"
+  test_path: "data/hotpotqa_official_val.json"
+  max_length: 384  # 减少序列长度以节省内存
+  max_query_length: 64
+
+training:
+  max_epochs: 5
+  batch_size: 2  # T4 GPU内存限制，使用更小的批次
+  num_workers: 1  # 减少worker数量
+  accelerator: "gpu"
+  devices: 1
+  precision: 32  # T4 GPU使用32位精度更稳定
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 4  # 增加梯度累积以补偿小批次
+  val_check_interval: 0.5
+  log_every_n_steps: 50
+  checkpoint_dir: "checkpoints"
+  early_stopping: true
+  patience: 3
+
+logging:
+  type: "tensorboard"
+  save_dir: "logs"
+  name: "gdmnet-t4-gpu"
