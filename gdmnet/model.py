@@ -171,7 +171,16 @@ class GDMNet(pl.LightningModule):
             logits: Output logits [batch_size, num_classes] or dict with intermediate results
         """
         batch_size = input_ids.size(0)
-        
+
+        # 确保所有输入张量在同一设备上（多GPU兼容）
+        device = input_ids.device
+        attention_mask = attention_mask.to(device)
+        query = query.to(device)
+        if entity_labels is not None:
+            entity_labels = entity_labels.to(device)
+        if relation_labels is not None:
+            relation_labels = relation_labels.to(device)
+
         # 1. Document Encoding
         sequence_output, pooled_output = self.encoder(
             input_ids, attention_mask, token_type_ids

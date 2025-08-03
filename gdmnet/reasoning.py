@@ -226,15 +226,19 @@ class PathFinder(nn.Module):
     ) -> Dict[int, List[Tuple[int, int]]]:
         """Create adjacency dictionary from edge information."""
         adjacency = {}
-        
-        for i in range(edge_index.size(1)):
-            src, dst = edge_index[0, i].item(), edge_index[1, i].item()
-            edge_t = edge_type[i].item()
-            
+
+        # 确保张量在CPU上进行索引操作（多GPU兼容）
+        edge_index_cpu = edge_index.cpu()
+        edge_type_cpu = edge_type.cpu()
+
+        for i in range(edge_index_cpu.size(1)):
+            src, dst = edge_index_cpu[0, i].item(), edge_index_cpu[1, i].item()
+            edge_t = edge_type_cpu[i].item()
+
             if src not in adjacency:
                 adjacency[src] = []
             adjacency[src].append((dst, edge_t))
-        
+
         return adjacency
     
     def _encode_path(

@@ -152,11 +152,17 @@ def train_model(config: Dict[str, Any]) -> GDMNet:
     if num_gpus > 1:
         print(f"🚀 检测到 {num_gpus} 个GPU，启用多GPU训练")
         trainer_config['devices'] = num_gpus
-        trainer_config['strategy'] = 'ddp'  # 分布式数据并行
+        trainer_config['strategy'] = 'ddp_find_unused_parameters_false'  # 更稳定的DDP策略
         # 调整批次大小以适应多GPU
         original_batch_size = config['training'].get('batch_size', 1)
         effective_batch_size = original_batch_size * num_gpus
         print(f"📊 多GPU批次大小: 每GPU {original_batch_size} → 总计 {effective_batch_size}")
+
+        # 设置多GPU环境变量
+        os.environ['NCCL_DEBUG'] = 'WARN'  # 减少NCCL日志
+        os.environ['CUDA_LAUNCH_BLOCKING'] = '0'  # 异步执行
+
+        print("🔧 多GPU环境变量已设置")
     else:
         print(f"🔧 使用单GPU训练")
         trainer_config['devices'] = 1

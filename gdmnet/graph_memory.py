@@ -105,7 +105,12 @@ class GraphMemory(nn.Module):
         
         for i, gnn_layer in enumerate(self.gnn_layers):
             h_prev = h
-            
+
+            # 确保所有张量在同一设备上（多GPU兼容）
+            device = h.device
+            edge_index = edge_index.to(device)
+            edge_type = edge_type.to(device)
+
             # Apply GNN layer
             if self.gnn_type == 'rgcn':
                 h = gnn_layer(h, edge_index, edge_type)
