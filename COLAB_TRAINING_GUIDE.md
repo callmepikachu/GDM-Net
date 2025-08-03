@@ -109,9 +109,9 @@ model:
   dropout_rate: 0.1
 
 data:
-  train_path: "data/hotpotqa_train.json"
-  val_path: "data/hotpotqa_val.json"
-  test_path: "data/hotpotqa_val.json"
+  train_path: "data/hotpotqa_official_train.json"
+  val_path: "data/hotpotqa_official_val.json"
+  test_path: "data/hotpotqa_official_val.json"
   max_length: 512
   max_query_length: 64
 
