@@ -204,12 +204,19 @@ class GDMNet(pl.LightningModule):
             entities_batch, relations_batch, sequence_output, batch_size
         )
         
-        # Update graph memory if nodes exist
+        # Update graph memory (确保所有参数都被使用)
         if node_features.size(0) > 0:
             updated_node_features = self.graph_memory(
                 node_features, edge_index, edge_type, batch_indices
             )
         else:
+            # 即使没有节点，也要通过图内存模块以确保参数被使用
+            dummy_features = torch.zeros(1, self.hparams.hidden_size, device=device)
+            dummy_edge_index = torch.zeros(2, 0, dtype=torch.long, device=device)
+            dummy_edge_type = torch.zeros(0, dtype=torch.long, device=device)
+            dummy_batch = torch.zeros(1, dtype=torch.long, device=device)
+
+            _ = self.graph_memory(dummy_features, dummy_edge_index, dummy_edge_type, dummy_batch)
             updated_node_features = node_features
         
         # 4. Query Processing
@@ -232,27 +239,39 @@ class GDMNet(pl.LightningModule):
                 # Use pooled output as fallback
                 query = pooled_output
         
-        # 5. Path Finding and Graph Reading
+        # 5. Path Finding and Graph Reading (确保所有参数都被使用)
         if updated_node_features.size(0) > 0:
             # Path finding
             path_repr, path_info = self.path_finder(
                 updated_node_features, edge_index, edge_type, query, batch_indices
             )
-            
+
             # Graph reading
             graph_repr, attention_weights = self.graph_reader(
                 updated_node_features, query, batch_indices
             )
-            
+
             # Handle batch dimension for path representation
             if path_repr.dim() == 1:
                 path_repr = path_repr.unsqueeze(0).expand(batch_size, -1)
             if graph_repr.dim() == 1:
                 graph_repr = graph_repr.unsqueeze(0).expand(batch_size, -1)
         else:
-            # No graph nodes, use zero representations
-            path_repr = torch.zeros(batch_size, self.hparams.hidden_size, device=input_ids.device)
-            graph_repr = torch.zeros(batch_size, self.hparams.hidden_size, device=input_ids.device)
+            # 即使没有节点，也要通过推理模块以确保参数被使用
+            dummy_features = torch.zeros(1, self.hparams.hidden_size, device=device)
+            dummy_edge_index = torch.zeros(2, 0, dtype=torch.long, device=device)
+            dummy_edge_type = torch.zeros(0, dtype=torch.long, device=device)
+            dummy_batch = torch.zeros(1, dtype=torch.long, device=device)
+
+            # 通过path_finder确保参数被使用
+            _, _ = self.path_finder(dummy_features, dummy_edge_index, dummy_edge_type, query[:1], dummy_batch)
+
+            # 通过graph_reader确保参数被使用
+            _, _ = self.graph_reader(dummy_features, query[:1], dummy_batch)
+
+            # 使用零表示
+            path_repr = torch.zeros(batch_size, self.hparams.hidden_size, device=device)
+            graph_repr = torch.zeros(batch_size, self.hparams.hidden_size, device=device)
             attention_weights = None
             path_info = {'num_paths': 0}
         
