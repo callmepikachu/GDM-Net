@@ -112,15 +112,10 @@ class GraphMemory(nn.Module):
             edge_type = edge_type.to(device)
 
             # Apply GNN layer with device synchronization
-            if self.gnn_type == 'rgcn':
-                # 确保RGCN层的所有参数都在正确设备上
-                if hasattr(gnn_layer, 'lin_rel') and hasattr(gnn_layer.lin_rel, 'weight'):
-                    gnn_layer.lin_rel.weight = gnn_layer.lin_rel.weight.to(device)
-                if hasattr(gnn_layer, 'lin_root') and hasattr(gnn_layer.lin_root, 'weight'):
-                    gnn_layer.lin_root.weight = gnn_layer.lin_root.weight.to(device)
-                if hasattr(gnn_layer, 'bias') and gnn_layer.bias is not None:
-                    gnn_layer.bias = gnn_layer.bias.to(device)
+            # 确保整个GNN层都在正确设备上
+            gnn_layer = gnn_layer.to(device)
 
+            if self.gnn_type == 'rgcn':
                 h = gnn_layer(h, edge_index, edge_type)
             else:  # GAT
                 h = gnn_layer(h, edge_index)
