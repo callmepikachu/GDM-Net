@@ -152,7 +152,9 @@ def train_model(config: Dict[str, Any]) -> GDMNet:
     if num_gpus > 1:
         print(f"🚀 检测到 {num_gpus} 个GPU，启用多GPU训练")
         trainer_config['devices'] = num_gpus
-        trainer_config['strategy'] = 'ddp_find_unused_parameters_true'  # 启用未使用参数检测
+        # 使用正确的DDP策略名称
+        from pytorch_lightning.strategies import DDPStrategy
+        trainer_config['strategy'] = DDPStrategy(find_unused_parameters=True)  # 启用未使用参数检测
         # 调整批次大小以适应多GPU
         original_batch_size = config['training'].get('batch_size', 1)
         effective_batch_size = original_batch_size * num_gpus

@@ -83,7 +83,7 @@ training:
   num_workers: 0  # 禁用多进程避免复杂性
   accelerator: "gpu"
   devices: 2  # 使用2个GPU
-  strategy: "ddp_find_unused_parameters_true"  # 启用未使用参数检测
+  strategy: "ddp"  # 使用标准DDP策略
   precision: 32
   gradient_clip_val: 1.0
   accumulate_grad_batches: 2
