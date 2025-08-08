@@ -1,391 +1,266 @@
-"""
-Graph Memory Module
-
-This module implements GraphMemory and GraphWriter classes for maintaining 
-and updating graph-structured memory using Graph Neural Networks.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import RGCNConv, GATConv, global_mean_pool
+from torch_geometric.nn import RGCNConv, GCNConv, GATConv
 from torch_geometric.data import Data, Batch
-from typing import Optional, Tuple, List, Dict, Union
-import math
+from typing import Optional, Dict, Any, List, Tuple
+
+
+class GraphWriter(nn.Module):
+    """Convert extracted entities and relations to graph format."""
+
+    def __init__(
+        self,
+        hidden_size: int = 768,
+        num_entity_types: int = 9,
+        num_relation_types: int = 10,
+        max_entities: int = 64
+    ):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        self.num_entity_types = num_entity_types
+        self.num_relation_types = num_relation_types
+        self.max_entities = max_entities
+
+        # Entity type embeddings
+        self.entity_type_embedding = nn.Embedding(num_entity_types, hidden_size)
+
+        # Position encoding
+        self.position_embedding = nn.Embedding(512, hidden_size)  # Max sequence length
+
+        # Node feature projection
+        self.node_projection = nn.Linear(hidden_size * 3, hidden_size)  # text + type + position
+
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+    def forward(
+        self,
+        entities_batch: List[List[Dict]],
+        relations_batch: List[List[Dict]],
+        sequence_output: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Convert entities and relations to graph format.
+
+        Args:
+            entities_batch: List of entity lists for each batch
+            relations_batch: List of relation lists for each batch
+            sequence_output: [batch_size, seq_len, hidden_size]
+
+        Returns:
+            node_features: [total_nodes, hidden_size]
+            edge_index: [2, total_edges]
+            edge_type: [total_edges]
+            batch_indices: [total_nodes]
+        """
+        batch_size = len(entities_batch)
+        device = sequence_output.device
+
+        all_node_features = []
+        all_edge_indices = []
+        all_edge_types = []
+        all_batch_indices = []
+
+        node_offset = 0
+
+        for b in range(batch_size):
+            entities = entities_batch[b]
+            relations = relations_batch[b]
+
+            # Pad entities to max_entities if needed
+            num_entities = min(len(entities), self.max_entities)
+            if num_entities == 0:
+                # Create dummy entity if no entities found
+                num_entities = 1
+                entities = [{'span': (0, 1), 'type': 0, 'representation': sequence_output[b, 0]}]
+
+            # Create node features
+            batch_node_features = []
+            for i in range(num_entities):
+                entity = entities[i] if i < len(entities) else entities[0]
+
+                # Text representation
+                text_repr = entity['representation']
+
+                # Entity type embedding
+                entity_type = torch.tensor(entity['type'], device=device)
+                type_repr = self.entity_type_embedding(entity_type)
+
+                # Position embedding
+                position = torch.tensor(entity['span'][0], device=device)
+                pos_repr = self.position_embedding(position)
+
+                # Combine features
+                combined_repr = torch.cat([text_repr, type_repr, pos_repr], dim=0)
+                node_feature = self.node_projection(combined_repr)
+                batch_node_features.append(node_feature)
+
+            batch_node_features = torch.stack(batch_node_features)
+            batch_node_features = self.layer_norm(batch_node_features)
+            all_node_features.append(batch_node_features)
+
+            # Create edges
+            batch_edge_indices = []
+            batch_edge_types = []
+
+            for relation in relations:
+                head = relation['head']
+                tail = relation['tail']
+                rel_type = relation['type']
+
+                if head < num_entities and tail < num_entities:
+                    # Add forward edge
+                    batch_edge_indices.append([head + node_offset, tail + node_offset])
+                    batch_edge_types.append(rel_type)
+
+                    # Add backward edge (bidirectional)
+                    batch_edge_indices.append([tail + node_offset, head + node_offset])
+                    batch_edge_types.append(rel_type)
+
+            # Add self-loops
+            for i in range(num_entities):
+                batch_edge_indices.append([i + node_offset, i + node_offset])
+                batch_edge_types.append(0)  # Self-loop type
+
+            if batch_edge_indices:
+                all_edge_indices.extend(batch_edge_indices)
+                all_edge_types.extend(batch_edge_types)
+
+            # Batch indices
+            batch_indices = [b] * num_entities
+            all_batch_indices.extend(batch_indices)
+
+            node_offset += num_entities
+
+        # Convert to tensors
+        if all_node_features:
+            node_features = torch.cat(all_node_features, dim=0)
+        else:
+            node_features = torch.zeros(1, self.hidden_size, device=device)
+
+        if all_edge_indices:
+            edge_index = torch.tensor(all_edge_indices, device=device).t().contiguous()
+            edge_type = torch.tensor(all_edge_types, device=device)
+        else:
+            edge_index = torch.zeros(2, 0, dtype=torch.long, device=device)
+            edge_type = torch.zeros(0, dtype=torch.long, device=device)
+
+        batch_indices = torch.tensor(all_batch_indices, device=device)
+
+        return node_features, edge_index, edge_type, batch_indices
 
 
 class GraphMemory(nn.Module):
-    """
-    Graph memory module using Graph Neural Networks (RGCN/GAT) to maintain graph structure.
-    
-    Args:
-        node_dim (int): Dimension of node features
-        edge_dim (int): Dimension of edge features
-        num_relations (int): Number of relation types
-        num_layers (int): Number of GNN layers
-        gnn_type (str): Type of GNN ('rgcn' or 'gat')
-        dropout_rate (float): Dropout rate
-        use_residual (bool): Whether to use residual connections
-    """
-    
+    """Graph neural network for processing structured knowledge."""
+
     def __init__(
         self,
-        node_dim: int = 768,
-        edge_dim: Optional[int] = None,
-        num_relations: int = 10,
-        num_layers: int = 2,
-        gnn_type: str = 'rgcn',
+        hidden_size: int = 768,
+        num_relation_types: int = 10,
+        gnn_type: str = "rgcn",
+        num_gnn_layers: int = 3,
         dropout_rate: float = 0.1,
         use_residual: bool = True
     ):
         super().__init__()
-        
-        self.node_dim = node_dim
-        self.edge_dim = edge_dim
-        self.num_relations = num_relations
-        self.num_layers = num_layers
+
+        self.hidden_size = hidden_size
+        self.num_relation_types = num_relation_types
         self.gnn_type = gnn_type.lower()
+        self.num_gnn_layers = num_gnn_layers
         self.use_residual = use_residual
         
-        # Build GNN layers
+        # Graph neural network layers
         self.gnn_layers = nn.ModuleList()
-        
-        for i in range(num_layers):
-            if self.gnn_type == 'rgcn':
+
+        for i in range(num_gnn_layers):
+            if self.gnn_type == "rgcn":
                 layer = RGCNConv(
-                    in_channels=node_dim,
-                    out_channels=node_dim,
-                    num_relations=num_relations,
+                    hidden_size,
+                    hidden_size,
+                    num_relations=num_relation_types,
                     aggr='mean'
                 )
-            elif self.gnn_type == 'gat':
+            elif self.gnn_type == "gcn":
+                layer = GCNConv(hidden_size, hidden_size, aggr='mean')
+            elif self.gnn_type == "gat":
                 layer = GATConv(
-                    in_channels=node_dim,
-                    out_channels=node_dim // 8,  # 8 attention heads
+                    hidden_size,
+                    hidden_size // 8,
                     heads=8,
                     dropout=dropout_rate,
                     concat=True
                 )
             else:
-                raise ValueError(f"Unsupported GNN type: {gnn_type}")
-            
+                raise ValueError(f"Unsupported GNN type: {self.gnn_type}")
+
             self.gnn_layers.append(layer)
-        
+
         # Layer normalization and dropout
         self.layer_norms = nn.ModuleList([
-            nn.LayerNorm(node_dim) for _ in range(num_layers)
+            nn.LayerNorm(hidden_size) for _ in range(num_gnn_layers)
         ])
         self.dropout = nn.Dropout(dropout_rate)
-        
-        # Node update gate for memory management
-        self.update_gate = nn.Linear(node_dim * 2, node_dim)
-        self.reset_gate = nn.Linear(node_dim * 2, node_dim)
-        self.new_gate = nn.Linear(node_dim * 2, node_dim)
-        
+    
     def forward(
-        self, 
-        x: torch.Tensor, 
-        edge_index: torch.Tensor, 
-        edge_type: Optional[torch.Tensor] = None,
-        batch: Optional[torch.Tensor] = None
+        self,
+        node_features: torch.Tensor,
+        edge_index: torch.Tensor,
+        edge_type: torch.Tensor,
+        batch_indices: torch.Tensor
     ) -> torch.Tensor:
         """
-        Forward pass through the graph memory.
-        
+        Forward pass through graph memory.
+
         Args:
-            x: Node features [num_nodes, node_dim]
-            edge_index: Edge indices [2, num_edges]
-            edge_type: Edge types [num_edges] (for RGCN)
-            batch: Batch indices [num_nodes] (for batched graphs)
-            
+            node_features: [total_nodes, hidden_size]
+            edge_index: [2, total_edges]
+            edge_type: [total_edges]
+            batch_indices: [total_nodes]
+
         Returns:
-            Updated node features [num_nodes, node_dim]
+            updated_node_features: [total_nodes, hidden_size]
         """
-        h = x
-        
+
+        x = node_features
+
+        # Apply GNN layers
         for i, gnn_layer in enumerate(self.gnn_layers):
-            h_prev = h
+            if self.use_residual:
+                residual = x
 
-            # 确保所有张量在同一设备上（多GPU兼容）
-            device = h.device
-            edge_index = edge_index.to(device)
-            edge_type = edge_type.to(device)
+            if self.gnn_type == "rgcn":
+                x = gnn_layer(x, edge_index, edge_type)
+            else:
+                x = gnn_layer(x, edge_index)
 
-            # Apply GNN layer with device synchronization
-            # 确保整个GNN层都在正确设备上
-            gnn_layer = gnn_layer.to(device)
+            if self.use_residual:
+                x = self.layer_norms[i](x + residual)
+            else:
+                x = self.layer_norms[i](x)
 
-            if self.gnn_type == 'rgcn':
-                h = gnn_layer(h, edge_index, edge_type)
-            else:  # GAT
-                h = gnn_layer(h, edge_index)
-            
-            # Apply layer normalization
-            h = self.layer_norms[i](h)
-            
-            # Apply residual connection
-            if self.use_residual and i > 0:
-                h = h + h_prev
-            
-            # Apply dropout
-            h = self.dropout(h)
-            
-            # Apply activation (except for the last layer)
-            if i < len(self.gnn_layers) - 1:
-                h = F.relu(h)
-        
-        return h
+            x = F.relu(x)
+            x = self.dropout(x)
+
+        return x
     
-    def update_memory(
-        self, 
-        current_memory: torch.Tensor, 
-        new_information: torch.Tensor
+    def compute_graph_attention(
+        self,
+        node_features: torch.Tensor,
+        edge_index: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Update graph memory with new information using gating mechanism.
+        """Compute attention weights between connected nodes."""
         
-        Args:
-            current_memory: Current memory state [num_nodes, node_dim]
-            new_information: New information to integrate [num_nodes, node_dim]
-            
-        Returns:
-            Updated memory state [num_nodes, node_dim]
-        """
-        # Concatenate current memory and new information
-        combined = torch.cat([current_memory, new_information], dim=-1)
+        if edge_index.size(1) == 0:
+            return torch.zeros(0, device=node_features.device)
         
-        # Compute gates
-        update_gate = torch.sigmoid(self.update_gate(combined))
-        reset_gate = torch.sigmoid(self.reset_gate(combined))
+        # Get source and target node features
+        source_features = node_features[edge_index[0]]  # [num_edges, hidden_size]
+        target_features = node_features[edge_index[1]]  # [num_edges, hidden_size]
         
-        # Compute new candidate values
-        reset_memory = reset_gate * current_memory
-        new_candidate = torch.tanh(self.new_gate(
-            torch.cat([reset_memory, new_information], dim=-1)
-        ))
+        # Compute attention scores
+        attention_scores = torch.sum(source_features * target_features, dim=1)
+        attention_weights = F.softmax(attention_scores, dim=0)
         
-        # Update memory
-        updated_memory = (1 - update_gate) * current_memory + update_gate * new_candidate
-        
-        return updated_memory
-
-
-class GraphWriter(nn.Module):
-    """
-    Graph writer module for converting extracted structures into graph representations.
-    
-    Args:
-        hidden_size (int): Hidden size of input representations
-        node_dim (int): Dimension of output node features
-        edge_dim (int): Dimension of output edge features
-        num_relations (int): Number of relation types
-        max_nodes (int): Maximum number of nodes per graph
-    """
-    
-    def __init__(
-        self,
-        hidden_size: int,
-        node_dim: int = 768,
-        edge_dim: Optional[int] = None,
-        num_relations: int = 10,
-        max_nodes: int = 512
-    ):
-        super().__init__()
-        
-        self.hidden_size = hidden_size
-        self.node_dim = node_dim
-        self.edge_dim = edge_dim
-        self.num_relations = num_relations
-        self.max_nodes = max_nodes
-        
-        # Node feature projection
-        self.node_projector = nn.Linear(hidden_size, node_dim)
-        
-        # Edge feature projection (if edge features are used)
-        if edge_dim:
-            self.edge_projector = nn.Linear(hidden_size, edge_dim)
-        
-        # Entity type embedding
-        self.entity_type_embedding = nn.Embedding(100, node_dim // 4)  # Support up to 100 entity types
-        
-        # Relation type embedding
-        self.relation_type_embedding = nn.Embedding(num_relations, node_dim // 4)
-        
-        # Position encoding for nodes
-        self.position_encoding = nn.Parameter(torch.randn(max_nodes, node_dim // 4))
-        
-        # Layer normalization
-        self.layer_norm = nn.LayerNorm(node_dim)
-        
-    def forward(
-        self,
-        entities: List[List[Dict]],
-        relations: List[List[Dict]],
-        entity_representations: torch.Tensor,
-        batch_size: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Convert extracted entities and relations into graph representation.
-        
-        Args:
-            entities: List of entity lists for each batch item
-            relations: List of relation lists for each batch item
-            entity_representations: Entity representations [batch_size, seq_len, hidden_size]
-            batch_size: Batch size
-            
-        Returns:
-            node_features: Node features [total_nodes, node_dim]
-            edge_index: Edge indices [2, total_edges]
-            edge_type: Edge types [total_edges]
-            batch_indices: Batch indices for each node [total_nodes]
-        """
-        all_node_features = []
-        all_edge_indices = []
-        all_edge_types = []
-        all_batch_indices = []
-        
-        node_offset = 0
-        
-        for b in range(batch_size):
-            batch_entities = entities[b]
-            batch_relations = relations[b]
-            
-            if not batch_entities:
-                # Create a dummy node if no entities
-                dummy_node = torch.zeros(1, self.node_dim)
-                all_node_features.append(dummy_node)
-                device = next(self.parameters()).device
-                all_batch_indices.append(torch.tensor([b], device=device))
-                node_offset += 1
-                continue
-            
-            # Create node features
-            node_features = self._create_node_features(
-                batch_entities, entity_representations[b], b
-            )
-            # 确保节点特征在正确设备上
-            device = next(self.parameters()).device
-            node_features = node_features.to(device)
-            all_node_features.append(node_features)
-            
-            # Create edges
-            if batch_relations:
-                edge_index, edge_type = self._create_edges(batch_relations, node_offset)
-                all_edge_indices.append(edge_index)
-                all_edge_types.append(edge_type)
-            
-            # Create batch indices
-            num_nodes = len(batch_entities)
-            device = next(self.parameters()).device
-            batch_indices = torch.full((num_nodes,), b, dtype=torch.long, device=device)
-            all_batch_indices.append(batch_indices)
-            
-            node_offset += num_nodes
-        
-        # Concatenate all features (强制设备一致性)
-        device = next(self.parameters()).device
-
-        # 强制将所有张量移动到正确设备
-        if all_node_features:
-            all_node_features = [nf.to(device) for nf in all_node_features]
-            node_features = torch.cat(all_node_features, dim=0)
-        else:
-            node_features = torch.empty(0, self.node_dim, device=device)
-
-        if all_edge_indices:
-            all_edge_indices = [ei.to(device) for ei in all_edge_indices]
-            edge_index = torch.cat(all_edge_indices, dim=1)
-        else:
-            edge_index = torch.empty(2, 0, dtype=torch.long, device=device)
-
-        if all_edge_types:
-            all_edge_types = [et.to(device) for et in all_edge_types]
-            edge_type = torch.cat(all_edge_types, dim=0)
-        else:
-            edge_type = torch.empty(0, dtype=torch.long, device=device)
-
-        if all_batch_indices:
-            all_batch_indices = [bi.to(device) for bi in all_batch_indices]
-            batch_indices = torch.cat(all_batch_indices, dim=0)
-        else:
-            batch_indices = torch.empty(0, dtype=torch.long, device=device)
-        
-        return node_features, edge_index, edge_type, batch_indices
-    
-    def _create_node_features(
-        self,
-        entities: List[Dict],
-        entity_repr: torch.Tensor,
-        batch_idx: int
-    ) -> torch.Tensor:
-        """Create node features from entities."""
-        node_features = []
-        
-        for i, entity in enumerate(entities):
-            # Get entity representation
-            start_pos = entity['start']
-            entity_vec = entity_repr[start_pos]  # [hidden_size]
-
-            # 确保张量在正确的设备上
-            device = next(self.parameters()).device
-            entity_vec = entity_vec.to(device)
-
-            # Project to node dimension
-            node_feat = self.node_projector(entity_vec)  # [node_dim * 3/4]
-            
-            # Add entity type embedding
-            entity_type = entity.get('type', 0)
-            type_emb = self.entity_type_embedding(torch.tensor(entity_type, device=device))
-            
-            # Add position encoding
-            pos_emb = self.position_encoding[i % self.max_nodes].to(device)
-            
-            # Combine features (确保所有张量在同一设备上)
-            node_feat_part = node_feat[:self.node_dim//2].to(device)
-            combined_feat = torch.cat([node_feat_part, type_emb, pos_emb], dim=0)
-            
-            # Ensure correct dimension
-            if combined_feat.size(0) != self.node_dim:
-                combined_feat = F.pad(combined_feat, (0, self.node_dim - combined_feat.size(0)))
-            
-            node_features.append(combined_feat)
-        
-        node_features = torch.stack(node_features)  # [num_entities, node_dim]
-        node_features = node_features.to(device)  # 确保在正确设备上
-        node_features = self.layer_norm(node_features)
-        
-        return node_features
-    
-    def _create_edges(
-        self,
-        relations: List[Dict],
-        node_offset: int
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Create edge indices and types from relations."""
-        edge_indices = []
-        edge_types = []
-        
-        for relation in relations:
-            head_idx = relation['head'] + node_offset
-            tail_idx = relation['tail'] + node_offset
-            rel_type = relation['type']
-            
-            # Add forward edge
-            edge_indices.append([head_idx, tail_idx])
-            edge_types.append(rel_type)
-            
-            # Add backward edge (optional, for undirected relations)
-            edge_indices.append([tail_idx, head_idx])
-            edge_types.append(rel_type)
-        
-        # 确保所有张量在正确的设备上
-        device = next(self.parameters()).device
-
-        if edge_indices:
-            edge_index = torch.tensor(edge_indices, device=device).t().contiguous()  # [2, num_edges]
-            edge_type = torch.tensor(edge_types, dtype=torch.long, device=device)  # [num_edges]
-        else:
-            edge_index = torch.empty(2, 0, dtype=torch.long, device=device)
-            edge_type = torch.empty(0, dtype=torch.long, device=device)
-        
-        return edge_index, edge_type
+        return attention_weights
