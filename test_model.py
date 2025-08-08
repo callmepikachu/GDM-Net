@@ -17,23 +17,46 @@ os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
 
 
 def test_model_forward():
-    """Test model forward pass."""
+    """Test model forward pass with detailed debugging."""
     print("Testing model forward pass...")
 
     try:
         # Load config
         config = load_config('config/default_config.yaml')
+        print(f"  Config hidden_size: {config['model']['hidden_size']}")
 
-        # Initialize model
-        model = GDMNet(**config['model'])
-        model.eval()
+        # Initialize model components step by step
+        print("  Initializing DocumentEncoder...")
+        from src.model.bert_encoder import DocumentEncoder
+        doc_encoder = DocumentEncoder(
+            model_name=config['model']['bert_model_name'],
+            hidden_size=config['model']['hidden_size']
+        )
+        print(f"    BERT config hidden_size: {doc_encoder.config.hidden_size}")
+        print(f"    Target hidden_size: {doc_encoder.hidden_size}")
+        print(f"    Need projection: {doc_encoder.need_projection}")
 
-        # Create dummy batch
+        # Test document encoding
         batch_size = 2
         seq_len = 128
-        num_entities = config['model']['num_entities']
+        dummy_input_ids = torch.randint(1, 1000, (batch_size, seq_len))
+        dummy_attention_mask = torch.ones(batch_size, seq_len)
 
-        # Ensure entity spans are valid
+        print("  Testing document encoding...")
+        doc_pooled, doc_sequence = doc_encoder.encode_document(dummy_input_ids, dummy_attention_mask)
+        print(f"    doc_pooled shape: {doc_pooled.shape}")
+        print(f"    doc_sequence shape: {doc_sequence.shape}")
+
+        # Test structure extraction
+        print("  Testing structure extraction...")
+        from src.model.bert_encoder import StructureExtractor
+        struct_extractor = StructureExtractor(
+            hidden_size=config['model']['hidden_size'],
+            num_entity_types=config['model']['num_entities'],
+            num_relation_types=config['model']['num_relations']
+        )
+
+        num_entities = config['model']['num_entities']
         entity_spans = torch.zeros(batch_size, num_entities, 2, dtype=torch.long)
         for b in range(batch_size):
             for e in range(num_entities):
@@ -41,11 +64,43 @@ def test_model_forward():
                 end = start + torch.randint(1, 10, (1,)).item()
                 entity_spans[b, e] = torch.tensor([start, min(end, seq_len - 1)])
 
+        entity_logits, relation_logits, entities_batch, relations_batch = struct_extractor(
+            doc_sequence, dummy_attention_mask, entity_spans
+        )
+        print(f"    entity_logits shape: {entity_logits.shape}")
+        print(f"    entities_batch length: {len(entities_batch)}")
+        for i, entities in enumerate(entities_batch):
+            print(f"      Batch {i}: {len(entities)} entities")
+            for j, entity in enumerate(entities[:3]):  # Show first 3 entities
+                print(f"        Entity {j}: type={entity['type']}, span={entity['span']}, repr_shape={entity['representation'].shape}")
+
+        # Test graph writer
+        print("  Testing graph writer...")
+        from src.model.graph_memory import GraphWriter
+        graph_writer = GraphWriter(
+            hidden_size=config['model']['hidden_size'],
+            num_entity_types=config['model']['num_entities'],
+            num_relation_types=config['model']['num_relations']
+        )
+
+        node_features, edge_index, edge_type, batch_indices = graph_writer(
+            entities_batch, relations_batch, doc_sequence
+        )
+        print(f"    node_features shape: {node_features.shape}")
+        print(f"    edge_index shape: {edge_index.shape}")
+        print(f"    edge_type shape: {edge_type.shape}")
+        print(f"    batch_indices shape: {batch_indices.shape}")
+
+        # Test full model
+        print("  Testing full model...")
+        model = GDMNet(**config['model'])
+        model.eval()
+
         dummy_batch = {
             'query_input_ids': torch.randint(1, 1000, (batch_size, 64)),
             'query_attention_mask': torch.ones(batch_size, 64),
-            'doc_input_ids': torch.randint(1, 1000, (batch_size, seq_len)),
-            'doc_attention_mask': torch.ones(batch_size, seq_len),
+            'doc_input_ids': dummy_input_ids,
+            'doc_attention_mask': dummy_attention_mask,
             'entity_spans': entity_spans,
             'labels': torch.randint(0, config['model']['num_classes'], (batch_size,))
         }
@@ -61,7 +116,10 @@ def test_model_forward():
         return True
 
     except Exception as e:
+        import traceback
         print(f"✗ Model forward pass failed: {str(e)}")
+        print("  Full traceback:")
+        traceback.print_exc()
         return False
 
 
@@ -150,14 +208,17 @@ def test_training_step():
             outputs = trainer.forward(dummy_batch)
             loss_dict = trainer.model.compute_loss(outputs, dummy_batch['labels'])
             loss = loss_dict['total_loss']
-        
+
         print(f"✓ Training step successful")
         print(f"  Loss: {loss.item():.4f}")
-        
+
         return True
-        
+
     except Exception as e:
+        import traceback
         print(f"✗ Training step failed: {str(e)}")
+        print("  Full traceback:")
+        traceback.print_exc()
         return False
 
 
