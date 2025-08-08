@@ -148,26 +148,19 @@ class GDMNetTrainer(pl.LightningModule):
     def configure_optimizers(self):
         """Configure optimizers and schedulers."""
 
-        # Separate parameters for different learning rates
-        bert_params = []
-        other_params = []
-
-        for name, param in self.model.named_parameters():
-            if 'bert' in name:
-                bert_params.append(param)
-            else:
-                other_params.append(param)
-
         # Get learning rate from config (check both model and training sections)
         learning_rate = self.config.get('model', {}).get('learning_rate',
                                        self.config.get('training', {}).get('learning_rate', 2e-5))
         learning_rate = float(learning_rate)
 
-        # Optimizer with different learning rates
-        optimizer = torch.optim.AdamW([
-            {'params': bert_params, 'lr': learning_rate},
-            {'params': other_params, 'lr': learning_rate * 10}
-        ], weight_decay=0.01)
+        # Only collect trainable parameters (BERT may be frozen)
+        trainable_params = [param for param in self.model.parameters() if param.requires_grad]
+
+        print(f"Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
+        print(f"Total parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+
+        # Optimizer for trainable parameters only
+        optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=0.01)
 
         # Learning rate scheduler with error handling
         try:

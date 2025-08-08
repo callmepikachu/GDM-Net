@@ -26,6 +26,7 @@ class GDMNet(nn.Module):
         dropout_rate: float = 0.1,
         entity_loss_weight: float = 0.1,
         relation_loss_weight: float = 0.1,
+        freeze_bert: bool = True,  # 默认冻结BERT
         **kwargs
     ):
         super().__init__()
@@ -40,7 +41,8 @@ class GDMNet(nn.Module):
         self.document_encoder = DocumentEncoder(
             model_name=bert_model_name,
             hidden_size=hidden_size,
-            dropout_rate=dropout_rate
+            dropout_rate=dropout_rate,
+            freeze_bert=freeze_bert
         )
 
         # Structure extractor for entities and relations

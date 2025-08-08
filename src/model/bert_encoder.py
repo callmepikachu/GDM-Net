@@ -13,7 +13,7 @@ class DocumentEncoder(nn.Module):
         model_name: str = "bert-base-uncased",
         hidden_size: int = 768,
         dropout_rate: float = 0.1,
-        freeze_bert: bool = False,
+        freeze_bert: bool = True,  # 默认冻结BERT
         use_chinese_mirror: bool = True
     ):
         super().__init__()
@@ -66,8 +66,11 @@ class DocumentEncoder(nn.Module):
         
         # Freeze BERT parameters if specified
         if freeze_bert:
+            print(f"Freezing BERT parameters for {model_name}")
             for param in self.bert.parameters():
                 param.requires_grad = False
+        else:
+            print(f"BERT parameters will be fine-tuned for {model_name}")
         
         # Projection layers - ensure correct dimensions
         bert_hidden_size = getattr(self.config, 'hidden_size', hidden_size)

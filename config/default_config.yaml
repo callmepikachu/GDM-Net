@@ -14,6 +14,7 @@ model:
   num_reasoning_hops: 4  # 增加推理跳数
   fusion_method: "gate"
   dropout_rate: 0.1
+  freeze_bert: true  # 冻结BERT参数，只训练下游任务层
 
 data:
   train_path: "data/hotpotqa_official_train.json"
