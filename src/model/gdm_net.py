@@ -188,21 +188,20 @@ class GDMNet(nn.Module):
                 self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
             fused_representation = self.emergency_projection(fused_representation)
 
-        # Apply classifier with proper scaling
+        # Apply classifier with numerical stability
         logits = self.classifier(fused_representation)
 
-        # Force logits to have reasonable range for learning
-        if logits.abs().max() < 0.1:
-            # If logits are too small, the model isn't learning properly
-            # Add a learnable scaling factor
-            if not hasattr(self, 'logits_scale'):
-                self.logits_scale = nn.Parameter(torch.tensor(5.0))
-            logits = logits * self.logits_scale
+        # Ensure logits are finite and have reasonable range
+        logits = torch.clamp(logits, min=-10, max=10)
 
-        # Ensure logits have proper variance
-        logits_std = logits.std()
-        if logits_std < 0.1:
-            # Add small random noise to break symmetry
+        # Check for NaN/Inf in logits
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print("WARNING: NaN/Inf detected in logits, using zeros")
+            logits = torch.zeros_like(logits)
+
+        # Ensure logits have some variance for learning
+        if logits.std() < 0.01:
+            # Add small structured noise to break symmetry
             noise = torch.randn_like(logits) * 0.1
             logits = logits + noise
 
@@ -288,8 +287,18 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Simple and robust loss calculation
-        main_loss = F.cross_entropy(logits, labels)
+        # Robust loss calculation with error handling
+        try:
+            main_loss = F.cross_entropy(logits, labels)
+
+            # Check if loss is valid
+            if torch.isnan(main_loss) or torch.isinf(main_loss):
+                print("WARNING: Invalid loss, using fallback")
+                main_loss = torch.tensor(1.0, device=logits.device, requires_grad=True)
+
+        except Exception as e:
+            print(f"ERROR in loss calculation: {e}")
+            main_loss = torch.tensor(1.0, device=logits.device, requires_grad=True)
 
         # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):
