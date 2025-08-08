@@ -43,8 +43,10 @@ class DualMemorySystem(nn.Module):
         # Fusion mechanisms
         if self.use_gating:
             self.fusion_gate = nn.Linear(memory_size * 2, 1)
-        
-        self.fusion_projection = nn.Linear(memory_size * 2, hidden_size)
+
+        # The fusion projection needs to handle concatenated episodic + semantic + combined features
+        # This can be memory_size * 2 (episodic + semantic) or memory_size * 3 depending on gating
+        self.fusion_projection = nn.Linear(memory_size * 3, hidden_size)
         
         # Layer normalization and dropout
         self.layer_norm = nn.LayerNorm(hidden_size)
@@ -150,24 +152,27 @@ class DualMemorySystem(nn.Module):
         semantic_output: torch.Tensor
     ) -> torch.Tensor:
         """Fuse episodic and semantic memory outputs."""
-        
+
         # Concatenate memory outputs
         combined = torch.cat([episodic_output, semantic_output], dim=1)
-        
+
         if self.use_gating:
             # Compute fusion gate
             gate = torch.sigmoid(self.fusion_gate(combined))
-            
+
             # Weighted combination
-            fused = gate * episodic_output + (1 - gate) * semantic_output
-            fused = torch.cat([fused, combined], dim=1)
+            weighted_combination = gate * episodic_output + (1 - gate) * semantic_output
+            # Final fusion: episodic + semantic + weighted_combination
+            fused = torch.cat([episodic_output, semantic_output, weighted_combination], dim=1)
         else:
-            fused = combined
-        
+            # Simple concatenation: episodic + semantic + zeros for consistency
+            zeros = torch.zeros_like(episodic_output)
+            fused = torch.cat([episodic_output, semantic_output, zeros], dim=1)
+
         # Project to output size
         output = self.fusion_projection(fused)
         output = self.layer_norm(self.dropout(output))
-        
+
         return output
     
     def reset_memory(self):
