@@ -301,21 +301,24 @@ class GraphWriter(nn.Module):
             # Get entity representation
             start_pos = entity['start']
             entity_vec = entity_repr[start_pos]  # [hidden_size]
-            
+
+            # 确保张量在正确的设备上
+            device = next(self.parameters()).device
+            entity_vec = entity_vec.to(device)
+
             # Project to node dimension
             node_feat = self.node_projector(entity_vec)  # [node_dim * 3/4]
             
             # Add entity type embedding
             entity_type = entity.get('type', 0)
-            # 确保张量在正确的设备上
-            device = next(self.parameters()).device
             type_emb = self.entity_type_embedding(torch.tensor(entity_type, device=device))
             
             # Add position encoding
             pos_emb = self.position_encoding[i % self.max_nodes].to(device)
             
-            # Combine features
-            combined_feat = torch.cat([node_feat[:self.node_dim//2], type_emb, pos_emb], dim=0)
+            # Combine features (确保所有张量在同一设备上)
+            node_feat_part = node_feat[:self.node_dim//2].to(device)
+            combined_feat = torch.cat([node_feat_part, type_emb, pos_emb], dim=0)
             
             # Ensure correct dimension
             if combined_feat.size(0) != self.node_dim:
