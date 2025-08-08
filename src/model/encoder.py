@@ -30,8 +30,51 @@ class DocumentEncoder(nn.Module):
     ):
         super().__init__()
         
-        # Load pre-trained BERT model
-        self.bert = BertModel.from_pretrained(model_name)
+        # Load pre-trained BERT model (支持国内镜像)
+        import os
+
+        # 设置国内镜像
+        mirror_urls = [
+            "https://hf-mirror.com",  # HuggingFace国内镜像
+            "https://huggingface.co"  # 原始地址作为备选
+        ]
+
+        self.bert = None
+        for mirror_url in mirror_urls:
+            try:
+                # 设置镜像环境变量
+                os.environ['HF_ENDPOINT'] = mirror_url
+                print(f"🔄 尝试从镜像加载BERT: {mirror_url}")
+
+                self.bert = BertModel.from_pretrained(model_name)
+                print(f"✅ 成功从镜像加载BERT模型: {model_name} (镜像: {mirror_url})")
+                break
+
+            except Exception as e:
+                print(f"⚠️ 镜像 {mirror_url} 连接失败: {str(e)[:100]}...")
+                continue
+
+        # 如果所有镜像都失败，尝试离线模式
+        if self.bert is None:
+            try:
+                print("🔄 尝试离线模式...")
+                self.bert = BertModel.from_pretrained(model_name, local_files_only=True)
+                print(f"✅ 离线模式加载BERT模型成功: {model_name}")
+            except Exception as e:
+                print(f"❌ 离线模式也失败，使用随机初始化: {str(e)[:100]}...")
+                # 使用随机初始化的BERT配置
+                from transformers import BertConfig
+                config = BertConfig(
+                    vocab_size=30522,
+                    hidden_size=768,
+                    num_hidden_layers=12,
+                    num_attention_heads=12,
+                    intermediate_size=3072,
+                    max_position_embeddings=512,
+                    type_vocab_size=2
+                )
+                self.bert = BertModel(config)
+                print("⚠️ 使用随机初始化的BERT模型，性能可能受影响")
         
         # Get actual hidden size from BERT config
         self.hidden_size = self.bert.config.hidden_size

@@ -261,6 +261,10 @@ def main():
     
     args = parser.parse_args()
 
+    # 设置HuggingFace国内镜像
+    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+    print("🌐 已设置HuggingFace国内镜像: https://hf-mirror.com")
+
     print("Starting GDM-Net training...")
 
     # 检查GPU设置

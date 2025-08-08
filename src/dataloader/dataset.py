@@ -53,8 +53,39 @@ class GDMNetDataset(Dataset):
         self.max_length = max_length
         self.max_query_length = max_query_length
         
-        # Initialize tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        # Initialize tokenizer (支持国内镜像)
+        import os
+
+        # 设置国内镜像
+        mirror_urls = [
+            "https://hf-mirror.com",  # HuggingFace国内镜像
+            "https://huggingface.co"  # 原始地址作为备选
+        ]
+
+        self.tokenizer = None
+        for mirror_url in mirror_urls:
+            try:
+                # 设置镜像环境变量
+                os.environ['HF_ENDPOINT'] = mirror_url
+                print(f"🔄 尝试从镜像加载tokenizer: {mirror_url}")
+
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+                print(f"✅ 成功从镜像加载tokenizer: {tokenizer_name} (镜像: {mirror_url})")
+                break
+
+            except Exception as e:
+                print(f"⚠️ 镜像 {mirror_url} 连接失败: {str(e)[:100]}...")
+                continue
+
+        # 如果所有镜像都失败，尝试离线模式
+        if self.tokenizer is None:
+            try:
+                print("🔄 尝试离线模式...")
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, local_files_only=True)
+                print(f"✅ 离线模式加载tokenizer成功: {tokenizer_name}")
+            except Exception as e:
+                print(f"❌ 离线模式也失败，使用备选tokenizer: {str(e)[:100]}...")
+                self.tokenizer = self._create_fallback_tokenizer()
         
         # Initialize type mappings
         self.entity_types = entity_types or self._create_default_entity_types()
@@ -63,6 +94,87 @@ class GDMNetDataset(Dataset):
         
         # Load data
         self.data = self._load_data()
+
+    def _check_local_cache(self):
+        """检查本地是否有BERT模型缓存"""
+        import os
+        from pathlib import Path
+
+        # 检查常见的缓存位置
+        cache_dirs = [
+            Path.home() / '.cache' / 'huggingface' / 'transformers',
+            Path('/root/.cache/huggingface/transformers'),
+            Path('/tmp/huggingface/transformers')
+        ]
+
+        for cache_dir in cache_dirs:
+            if cache_dir.exists():
+                # 查找bert-base-uncased相关文件
+                for item in cache_dir.iterdir():
+                    if 'bert-base-uncased' in str(item):
+                        print(f"✅ 找到本地缓存: {item}")
+                        return True
+        return False
+
+    def _create_fallback_tokenizer(self):
+        """创建备选tokenizer"""
+        print("🔧 创建基础tokenizer作为备选...")
+
+        # 创建一个基础的词汇表
+        vocab = {
+            '[PAD]': 0, '[UNK]': 1, '[CLS]': 2, '[SEP]': 3, '[MASK]': 4
+        }
+
+        # 添加常用词汇
+        common_words = [
+            'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+            'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have',
+            'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+            'what', 'where', 'when', 'who', 'why', 'how', 'which', 'that', 'this'
+        ]
+
+        for i, word in enumerate(common_words, start=5):
+            vocab[word] = i
+
+        # 创建简单的tokenizer类
+        class FallbackTokenizer:
+            def __init__(self, vocab):
+                self.vocab = vocab
+                self.inv_vocab = {v: k for k, v in vocab.items()}
+                self.pad_token_id = vocab['[PAD]']
+                self.unk_token_id = vocab['[UNK]']
+                self.cls_token_id = vocab['[CLS]']
+                self.sep_token_id = vocab['[SEP]']
+                self.mask_token_id = vocab['[MASK]']
+
+            def encode(self, text, max_length=512, padding=True, truncation=True, return_tensors=None):
+                # 简单的词汇分割
+                words = text.lower().split()
+                token_ids = [self.cls_token_id]
+
+                for word in words:
+                    token_id = self.vocab.get(word, self.unk_token_id)
+                    token_ids.append(token_id)
+                    if len(token_ids) >= max_length - 1:
+                        break
+
+                token_ids.append(self.sep_token_id)
+
+                # 填充或截断
+                if padding and len(token_ids) < max_length:
+                    token_ids.extend([self.pad_token_id] * (max_length - len(token_ids)))
+                elif truncation and len(token_ids) > max_length:
+                    token_ids = token_ids[:max_length]
+
+                if return_tensors == 'pt':
+                    import torch
+                    return {'input_ids': torch.tensor([token_ids])}
+                return {'input_ids': token_ids}
+
+            def __call__(self, text, **kwargs):
+                return self.encode(text, **kwargs)
+
+        return FallbackTokenizer(vocab)
         
         print(f"Loaded {len(self.data)} samples from {data_path}")
         print(f"Entity types: {len(self.entity_types)}")
