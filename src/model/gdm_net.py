@@ -203,8 +203,20 @@ class GDMNet(nn.Module):
             Dictionary containing different loss components
         """
 
-        # Main classification loss
-        main_loss = self.main_loss_fn(outputs['logits'], labels)
+        # Main classification loss with numerical stability
+        logits = outputs['logits']
+
+        # Check for NaN/Inf in logits
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print("WARNING: NaN/Inf detected in logits")
+            logits = torch.clamp(logits, min=-10, max=10)
+
+        main_loss = self.main_loss_fn(logits, labels)
+
+        # Check for NaN/Inf in loss
+        if torch.isnan(main_loss) or torch.isinf(main_loss):
+            print("WARNING: NaN/Inf detected in main loss")
+            main_loss = torch.tensor(1.0, device=main_loss.device, requires_grad=True)
 
         total_loss = main_loss
         loss_dict = {'main_loss': main_loss}

@@ -84,16 +84,16 @@ class DualMemorySystem(nn.Module):
         episodic_query = self.episodic_query_projection(query_representations)
         semantic_query = self.semantic_query_projection(query_representations)
         
-        # Access episodic memory
-        episodic_attention = F.softmax(
-            torch.matmul(episodic_query, self.episodic_memory.t()), dim=1
-        )
+        # Access episodic memory with numerical stability
+        episodic_scores = torch.matmul(episodic_query, self.episodic_memory.t())
+        episodic_scores = torch.clamp(episodic_scores, min=-10, max=10)  # Prevent extreme values
+        episodic_attention = F.softmax(episodic_scores, dim=1)
         episodic_output = torch.matmul(episodic_attention, self.episodic_memory)
-        
-        # Access semantic memory
-        semantic_attention = F.softmax(
-            torch.matmul(semantic_query, self.semantic_memory.t()), dim=1
-        )
+
+        # Access semantic memory with numerical stability
+        semantic_scores = torch.matmul(semantic_query, self.semantic_memory.t())
+        semantic_scores = torch.clamp(semantic_scores, min=-10, max=10)  # Prevent extreme values
+        semantic_attention = F.softmax(semantic_scores, dim=1)
         semantic_output = torch.matmul(semantic_attention, self.semantic_memory)
         
         # Update memory if specified

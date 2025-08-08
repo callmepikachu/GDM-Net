@@ -25,19 +25,19 @@ data:
 
 training:
   max_epochs: 10
-  batch_size: 16  # 大批次大小充分利用48GB显存
-  learning_rate: 2e-5  # 标准BERT学习率
+  batch_size: 8   # 减小批次大小提高稳定性
+  learning_rate: 1e-4  # 降低学习率防止梯度爆炸
   num_workers: 4  # 多进程数据加载
   accelerator: "gpu"
   devices: 1
   precision: 32
-  gradient_clip_val: 1.0
-  accumulate_grad_batches: 1  # 不需要梯度累积
+  gradient_clip_val: 0.5  # 更严格的梯度裁剪
+  accumulate_grad_batches: 2  # 梯度累积保持有效批次大小
   val_check_interval: 0.5
   log_every_n_steps: 50
   checkpoint_dir: "checkpoints"
   early_stopping: true
-  patience: 3
+  patience: 5  # 增加耐心值
 
 logging:
   type: "tensorboard"

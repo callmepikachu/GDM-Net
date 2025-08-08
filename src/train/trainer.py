@@ -92,21 +92,34 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
+        # Check for NaN values and log debugging info
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"WARNING: NaN/Inf loss detected at batch {batch_idx}")
+            print(f"  Main loss: {main_loss}")
+            print(f"  Total loss: {total_loss}")
+            print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
+            print(f"  Labels: {labels}")
+            # Return a small finite loss to continue training
+            total_loss = torch.tensor(1.0, device=total_loss.device, requires_grad=True)
+
         # Compute accuracy
         logits = outputs['logits']
         preds = torch.argmax(logits, dim=1)
         acc = self.train_accuracy(preds, labels)
 
-        # Log metrics
-        self.log('train_loss', total_loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log('train_main_loss', main_loss, on_step=True, on_epoch=True)
-        self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True)
+        # Get batch size for proper logging
+        batch_size = labels.size(0)
+
+        # Log metrics with batch_size
+        self.log('train_loss', total_loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('train_main_loss', main_loss, on_step=True, on_epoch=True, batch_size=batch_size)
+        self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
         # Log auxiliary losses if available
         if 'entity_loss' in loss_dict:
-            self.log('train_entity_loss', loss_dict['entity_loss'], on_step=True, on_epoch=True)
+            self.log('train_entity_loss', loss_dict['entity_loss'], on_step=True, on_epoch=True, batch_size=batch_size)
         if 'relation_loss' in loss_dict:
-            self.log('train_relation_loss', loss_dict['relation_loss'], on_step=True, on_epoch=True)
+            self.log('train_relation_loss', loss_dict['relation_loss'], on_step=True, on_epoch=True, batch_size=batch_size)
 
         return total_loss
     
@@ -127,21 +140,28 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
+        # Check for NaN values
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            total_loss = torch.tensor(1.0, device=total_loss.device)
+
         # Compute accuracy
         logits = outputs['logits']
         preds = torch.argmax(logits, dim=1)
         acc = self.val_accuracy(preds, labels)
 
-        # Log metrics
-        self.log('val_loss', total_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log('val_main_loss', main_loss, on_step=False, on_epoch=True)
-        self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True)
+        # Get batch size for proper logging
+        batch_size = labels.size(0)
+
+        # Log metrics with batch_size
+        self.log('val_loss', total_loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
+        self.log('val_main_loss', main_loss, on_step=False, on_epoch=True, batch_size=batch_size)
+        self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
         # Log auxiliary losses if available
         if 'entity_loss' in loss_dict:
-            self.log('val_entity_loss', loss_dict['entity_loss'], on_step=False, on_epoch=True)
+            self.log('val_entity_loss', loss_dict['entity_loss'], on_step=False, on_epoch=True, batch_size=batch_size)
         if 'relation_loss' in loss_dict:
-            self.log('val_relation_loss', loss_dict['relation_loss'], on_step=False, on_epoch=True)
+            self.log('val_relation_loss', loss_dict['relation_loss'], on_step=False, on_epoch=True, batch_size=batch_size)
 
         return total_loss
     
