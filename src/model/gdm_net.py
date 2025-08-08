@@ -93,6 +93,15 @@ class GDMNet(nn.Module):
         # Initialize all model weights properly
         self.apply(self._init_weights)
 
+        # Loss functions
+        self.main_loss_fn = nn.CrossEntropyLoss()
+        self.entity_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
+        self.relation_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
+
+        # Layer normalization
+        self.layer_norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout_rate)
+
     def _init_weights(self, module):
         """Initialize weights for all modules."""
         if isinstance(module, nn.Linear):
@@ -106,15 +115,6 @@ class GDMNet(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-        # Loss functions
-        self.main_loss_fn = nn.CrossEntropyLoss()
-        self.entity_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
-        self.relation_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
-
-        # Layer normalization
-        self.layer_norm = nn.LayerNorm(hidden_size)
-        self.dropout = nn.Dropout(dropout_rate)
-    
     def forward(
         self,
         query_input_ids: torch.Tensor,
