@@ -171,12 +171,7 @@ class GDMNet(nn.Module):
         )
 
         # Step 8: Final classification
-        if not hasattr(self, '_forward_count'):
-            self._forward_count = 0
-        if self._forward_count < 3:
-            print(f"DEBUG: fused_representation shape: {fused_representation.shape}")
-            print(f"DEBUG: expected hidden_size: {self.hidden_size}")
-            self._forward_count += 1
+        # Dimensions are stable now - remove debug output
 
         # Ensure fused_representation has correct dimension
         if fused_representation.size(-1) != self.hidden_size:
@@ -194,8 +189,7 @@ class GDMNet(nn.Module):
                                        torch.zeros_like(param), param)
 
         logits = self.classifier(fused_representation)
-        if self._forward_count <= 3:
-            print(f"DEBUG: logits shape after classifier: {logits.shape}")
+        # Remove debug output - no longer needed
 
         # Check logits immediately after classifier
         if torch.isnan(logits).any() or torch.isinf(logits).any():
@@ -204,19 +198,43 @@ class GDMNet(nn.Module):
             print(f"  fused_representation has NaN: {torch.isnan(fused_representation).any()}")
             print(f"  fused_representation has Inf: {torch.isinf(fused_representation).any()}")
 
-        # Prepare outputs
+        # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
+            # 最终输出
             'logits': logits,
+
+            # 辅助任务输出
             'entity_logits': entity_logits,
             'relation_logits': relation_logits,
+
+            # 隐式路径 (Implicit Path) - BERT编码结果
             'doc_representation': doc_pooled,
             'query_representation': query_pooled,
-            'graph_representation': graph_representation,
-            'path_representation': path_representation,
-            'memory_output': memory_output,
-            'fused_representation': fused_representation,
+
+            # 显式路径 (Explicit Path) - 结构化知识
             'entities_batch': entities_batch,
-            'relations_batch': relations_batch
+            'relations_batch': relations_batch,
+            'updated_node_features': updated_node_features,
+
+            # 图神经网络处理结果
+            'graph_representation': graph_representation,
+
+            # 多跳推理结果
+            'path_representation': path_representation,
+
+            # 双记忆系统输出
+            'memory_output': memory_output,
+            'episodic_output': episodic_output,
+            'semantic_output': semantic_output,
+
+            # 最终融合表示
+            'fused_representation': fused_representation,
+
+            # 图构建信息
+            'node_features': node_features,
+            'edge_index': edge_index,
+            'edge_type': edge_type,
+            'batch_indices': batch_indices
         }
 
         return outputs
@@ -244,13 +262,7 @@ class GDMNet(nn.Module):
         # Main classification loss with numerical stability
         logits = outputs['logits']
 
-        # Debug: Check dimensions (only for first few batches)
-        if not hasattr(self, '_debug_count'):
-            self._debug_count = 0
-        if self._debug_count < 3:
-            print(f"DEBUG: logits shape: {logits.shape}, labels shape: {labels.shape}")
-            print(f"DEBUG: num_classes: {self.num_classes}")
-            self._debug_count += 1
+        # Dimensions should be correct now - remove debug output
 
         # Check logits dimensions
         if logits.size(1) != self.num_classes:
@@ -284,27 +296,22 @@ class GDMNet(nn.Module):
             print(f"WARNING: Extremely large logits detected: max={logits.abs().max()}")
             logits = torch.clamp(logits, min=-5, max=5)
 
-        # Use numerically stable cross entropy implementation
-        try:
-            # Method 1: Manual stable implementation
-            log_probs = F.log_softmax(logits, dim=1)
+        # Use standard cross entropy - should be stable now with proper initialization
+        main_loss = F.cross_entropy(logits, labels)
 
-            # Check for NaN in log_probs
-            if torch.isnan(log_probs).any():
-                print("NaN detected in log_probs, using fallback")
-                main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
-            else:
-                # Gather the log probabilities for the correct classes
-                main_loss = F.nll_loss(log_probs, labels)
+        # Debug: Check if we're still getting fallback values
+        if not hasattr(self, '_loss_debug_count'):
+            self._loss_debug_count = 0
+        if self._loss_debug_count < 5:
+            print(f"Loss debug {self._loss_debug_count}: main_loss = {main_loss.item():.6f}")
+            self._loss_debug_count += 1
 
-                # Final NaN check
-                if torch.isnan(main_loss):
-                    print("NaN detected in nll_loss, using fallback")
-                    main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
-
-        except Exception as e:
-            print(f"ERROR in loss computation: {e}")
-            main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
+        # Only use fallback if loss is actually NaN/Inf
+        if torch.isnan(main_loss) or torch.isinf(main_loss):
+            print(f"WARNING: NaN/Inf detected in main loss. Using fallback.")
+            print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
+            print(f"  Labels: {labels}")
+            main_loss = torch.tensor(0.1, device=main_loss.device, requires_grad=True)
 
         # Final check for NaN/Inf
         if torch.isnan(main_loss) or torch.isinf(main_loss):

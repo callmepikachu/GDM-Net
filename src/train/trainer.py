@@ -93,28 +93,21 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Check for NaN values and log debugging info
+        # Only log if there are actual NaN values (should be rare now)
         if torch.isnan(total_loss) or torch.isinf(total_loss):
             print(f"WARNING: NaN/Inf loss detected at batch {batch_idx}")
             print(f"  Main loss: {main_loss}")
             print(f"  Total loss: {total_loss}")
             print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
             print(f"  Labels: {labels}")
-            # Return a small finite loss to continue training
+            # This should rarely happen now
             total_loss = torch.tensor(0.1, device=total_loss.device, requires_grad=True)
 
         # Compute accuracy
         logits = outputs['logits']
         preds = torch.argmax(logits, dim=1)
 
-        # Debug info for first few batches
-        if batch_idx < 2:
-            print(f"Batch {batch_idx} debug:")
-            print(f"  Logits shape: {logits.shape}")
-            print(f"  Labels: {labels}")
-            print(f"  Predictions: {preds}")
-            print(f"  Labels range: [{labels.min()}, {labels.max()}]")
-            print(f"  Preds range: [{preds.min()}, {preds.max()}]")
+        # Model is stable now - remove debug output
 
         acc = self.train_accuracy(preds, labels)
 
