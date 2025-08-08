@@ -273,16 +273,17 @@ class GraphWriter(nn.Module):
             
             # Create batch indices
             num_nodes = len(batch_entities)
-            batch_indices = torch.full((num_nodes,), b, dtype=torch.long)
+            batch_indices = torch.full((num_nodes,), b, dtype=torch.long, device=encoded_docs.device)
             all_batch_indices.append(batch_indices)
             
             node_offset += num_nodes
         
-        # Concatenate all features
-        node_features = torch.cat(all_node_features, dim=0) if all_node_features else torch.empty(0, self.node_dim)
-        edge_index = torch.cat(all_edge_indices, dim=1) if all_edge_indices else torch.empty(2, 0, dtype=torch.long)
-        edge_type = torch.cat(all_edge_types, dim=0) if all_edge_types else torch.empty(0, dtype=torch.long)
-        batch_indices = torch.cat(all_batch_indices, dim=0) if all_batch_indices else torch.empty(0, dtype=torch.long)
+        # Concatenate all features (确保设备一致性)
+        device = encoded_docs.device
+        node_features = torch.cat(all_node_features, dim=0) if all_node_features else torch.empty(0, self.node_dim, device=device)
+        edge_index = torch.cat(all_edge_indices, dim=1) if all_edge_indices else torch.empty(2, 0, dtype=torch.long, device=device)
+        edge_type = torch.cat(all_edge_types, dim=0) if all_edge_types else torch.empty(0, dtype=torch.long, device=device)
+        batch_indices = torch.cat(all_batch_indices, dim=0) if all_batch_indices else torch.empty(0, dtype=torch.long, device=device)
         
         return node_features, edge_index, edge_type, batch_indices
     
@@ -310,7 +311,7 @@ class GraphWriter(nn.Module):
             type_emb = self.entity_type_embedding(torch.tensor(entity_type, device=device))
             
             # Add position encoding
-            pos_emb = self.position_encoding[i % self.max_nodes]
+            pos_emb = self.position_encoding[i % self.max_nodes].to(device)
             
             # Combine features
             combined_feat = torch.cat([node_feat[:self.node_dim//2], type_emb, pos_emb], dim=0)
