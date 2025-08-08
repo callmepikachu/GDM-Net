@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import argparse
 import torch
 from torch.utils.data import DataLoader
@@ -8,10 +9,15 @@ from tqdm import tqdm
 import json
 from typing import Dict, Any, List
 
-from ..model import GDMNet
-from ..dataloader import HotpotQADataset, GDMNetDataCollator
-from ..utils import load_config, setup_logger
-from .metrics import MetricsCalculator, compute_metrics
+# Add the project root to Python path for imports
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.model import GDMNet
+from src.dataloader import HotpotQADataset, GDMNetDataCollator
+from src.utils import load_config, setup_logger
+from src.evaluate.metrics import MetricsCalculator, compute_metrics
 
 
 def load_model(model_path: str, config: Dict[str, Any]) -> GDMNet:

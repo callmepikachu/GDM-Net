@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 
-from ..utils import load_config, setup_logger, validate_config
-from .trainer import GDMNetTrainer
+# Add the project root to Python path for imports
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.utils import load_config, setup_logger, validate_config
+from src.train.trainer import GDMNetTrainer
 
 
 def setup_callbacks(config):

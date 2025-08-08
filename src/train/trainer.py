@@ -5,10 +5,17 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from typing import Dict, Any, Optional
 import logging
+import os
+import sys
 
-from ..model import GDMNet
-from ..dataloader import HotpotQADataset, GDMNetDataCollator
-from ..utils import setup_logger
+# Add the project root to Python path for imports
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.model import GDMNet
+from src.dataloader import HotpotQADataset, GDMNetDataCollator
+from src.utils import setup_logger
 
 
 class GDMNetTrainer(pl.LightningModule):
