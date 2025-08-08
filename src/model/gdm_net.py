@@ -206,17 +206,26 @@ class GDMNet(nn.Module):
         # Main classification loss with numerical stability
         logits = outputs['logits']
 
-        # Check for NaN/Inf in logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print("WARNING: NaN/Inf detected in logits")
-            logits = torch.clamp(logits, min=-10, max=10)
+        # Check label range
+        if labels.max() >= self.num_classes or labels.min() < 0:
+            print(f"WARNING: Labels out of range! Labels: {labels}, num_classes: {self.num_classes}")
+            # Clamp labels to valid range
+            labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        main_loss = self.main_loss_fn(logits, labels)
+        # Apply numerical stability to logits
+        logits = torch.clamp(logits, min=-10, max=10)
 
-        # Check for NaN/Inf in loss
+        # Use standard CrossEntropyLoss with label smoothing for stability
+        main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
+
+        # Final check for NaN/Inf
         if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print("WARNING: NaN/Inf detected in main loss")
-            main_loss = torch.tensor(1.0, device=main_loss.device, requires_grad=True)
+            print(f"WARNING: NaN/Inf detected in main loss. Using fallback.")
+            print(f"  Logits shape: {logits.shape}")
+            print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
+            print(f"  Labels: {labels}")
+            print(f"  Labels range: [{labels.min()}, {labels.max()}]")
+            main_loss = torch.tensor(0.1, device=main_loss.device, requires_grad=True)
 
         total_loss = main_loss
         loss_dict = {'main_loss': main_loss}

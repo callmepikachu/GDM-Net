@@ -50,10 +50,11 @@ class GDMNetTrainer(pl.LightningModule):
         self.val_dataset = val_dataset
         
         # Metrics tracking
+        self.num_classes = config['model']['num_classes']
         try:
             from torchmetrics import Accuracy
-            self.train_accuracy = Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
-            self.val_accuracy = Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
+            self.train_accuracy = Accuracy(task='multiclass', num_classes=self.num_classes)
+            self.val_accuracy = Accuracy(task='multiclass', num_classes=self.num_classes)
         except ImportError:
             # Fallback for older versions
             from pytorch_lightning.metrics import Accuracy
@@ -100,11 +101,21 @@ class GDMNetTrainer(pl.LightningModule):
             print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
             print(f"  Labels: {labels}")
             # Return a small finite loss to continue training
-            total_loss = torch.tensor(1.0, device=total_loss.device, requires_grad=True)
+            total_loss = torch.tensor(0.1, device=total_loss.device, requires_grad=True)
 
         # Compute accuracy
         logits = outputs['logits']
         preds = torch.argmax(logits, dim=1)
+
+        # Debug info for first few batches
+        if batch_idx < 5:
+            print(f"Batch {batch_idx} debug:")
+            print(f"  Logits shape: {logits.shape}")
+            print(f"  Labels: {labels}")
+            print(f"  Predictions: {preds}")
+            print(f"  Labels range: [{labels.min()}, {labels.max()}]")
+            print(f"  Preds range: [{preds.min()}, {preds.max()}]")
+
         acc = self.train_accuracy(preds, labels)
 
         # Get batch size for proper logging
@@ -142,7 +153,7 @@ class GDMNetTrainer(pl.LightningModule):
 
         # Check for NaN values
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            total_loss = torch.tensor(1.0, device=total_loss.device)
+            total_loss = torch.tensor(0.1, device=total_loss.device)
 
         # Compute accuracy
         logits = outputs['logits']

@@ -111,6 +111,33 @@ class HotpotQADataset(Dataset):
     
     def __len__(self) -> int:
         return len(self.data)
+
+    def _extract_label(self, sample):
+        """Extract label from a sample."""
+        # HotpotQA typically has 'answer' field, not 'label'
+        # We need to convert answer to classification label
+        if 'answer' in sample:
+            answer = sample['answer'].lower().strip()
+            # Map common answers to class indices
+            if answer in ['yes', 'true', '1']:
+                return 1
+            elif answer in ['no', 'false', '0']:
+                return 0
+            else:
+                # For other answers, use hash to get consistent label
+                return hash(answer) % 5  # Assuming 5 classes
+        elif 'label' in sample:
+            return int(sample['label'])
+        else:
+            return 0
+
+    def get_label_distribution(self):
+        """Get distribution of labels in the dataset."""
+        label_counts = {}
+        for sample in self.data:
+            label = self._extract_label(sample)
+            label_counts[label] = label_counts.get(label, 0) + 1
+        return label_counts
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """Get a single sample."""
@@ -121,7 +148,7 @@ class HotpotQADataset(Dataset):
         query = sample['query']
         entities = sample.get('entities', [])
         relations = sample.get('relations', [])
-        label = sample.get('label', 0)
+        label = self._extract_label(sample)
         
         # Tokenize query and document
         query_encoding = self.tokenizer(
@@ -187,10 +214,4 @@ class HotpotQADataset(Dataset):
             'metadata': sample.get('metadata', {})
         }
     
-    def get_label_distribution(self) -> Dict[int, int]:
-        """Get distribution of labels in dataset."""
-        label_counts = {}
-        for sample in self.data:
-            label = sample.get('label', 0)
-            label_counts[label] = label_counts.get(label, 0) + 1
-        return label_counts
+

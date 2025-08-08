@@ -125,13 +125,49 @@ def test_model_forward():
 
 
 def test_dataset_loading():
-    """Test dataset loading."""
+    """Test dataset loading and check data structure."""
     print("\nTesting dataset loading...")
-    
+
     # Load config
     config = load_config('config/default_config.yaml')
-    
-    # Test with a small subset
+
+    # First, check raw data structure
+    import json
+    print("  Checking raw data structure...")
+    try:
+        with open(config['data']['train_path'], 'r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+
+        print(f"  Raw data type: {type(raw_data)}")
+        print(f"  Raw data length: {len(raw_data)}")
+
+        # Check first sample structure
+        first_sample = raw_data[0]
+        print(f"  First sample keys: {list(first_sample.keys())}")
+
+        # Check if there's a label field
+        if 'label' in first_sample:
+            print(f"  Label field exists: {first_sample['label']}")
+        elif 'answer' in first_sample:
+            print(f"  Answer field exists: {first_sample['answer']}")
+        else:
+            print(f"  No obvious label field. Available keys: {list(first_sample.keys())}")
+
+        # Check a few samples for label distribution
+        labels_found = []
+        for i in range(min(10, len(raw_data))):
+            sample = raw_data[i]
+            if 'label' in sample:
+                labels_found.append(sample['label'])
+            elif 'answer' in sample:
+                labels_found.append(sample['answer'])
+
+        print(f"  Labels in first 10 samples: {labels_found}")
+
+    except Exception as e:
+        print(f"  Error reading raw data: {e}")
+
+    # Test with dataset class
     try:
         dataset = HotpotQADataset(
             data_path=config['data']['train_path'],
@@ -140,31 +176,41 @@ def test_dataset_loading():
             max_query_length=config['data']['max_query_length'],
             num_entities=config['model']['num_entities']
         )
-        
+
         print(f"✓ Dataset loaded successfully")
         print(f"  Dataset size: {len(dataset)}")
-        
+
         # Test single sample
         sample = dataset[0]
         print(f"  Sample keys: {list(sample.keys())}")
-        
+        print(f"  Label value: {sample['label']}")
+        print(f"  Label type: {type(sample['label'])}")
+
+        # Check label distribution
+        label_dist = dataset.get_label_distribution()
+        print(f"  Label distribution: {label_dist}")
+
         # Test dataloader
         collator = GDMNetDataCollator()
         dataloader = DataLoader(
-            dataset, 
-            batch_size=2, 
-            shuffle=False, 
+            dataset,
+            batch_size=2,
+            shuffle=False,
             collate_fn=collator
         )
-        
+
         batch = next(iter(dataloader))
         print(f"  Batch keys: {list(batch.keys())}")
         print(f"  Batch size: {batch['labels'].shape[0]}")
-        
+        print(f"  Batch labels: {batch['labels']}")
+        print(f"  Labels range: [{batch['labels'].min()}, {batch['labels'].max()}]")
+
         return True
-        
+
     except Exception as e:
         print(f"✗ Dataset loading failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
