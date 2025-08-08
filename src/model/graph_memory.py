@@ -263,6 +263,9 @@ class GraphWriter(nn.Module):
             node_features = self._create_node_features(
                 batch_entities, entity_representations[b], b
             )
+            # 确保节点特征在正确设备上
+            device = next(self.parameters()).device
+            node_features = node_features.to(device)
             all_node_features.append(node_features)
             
             # Create edges
@@ -327,6 +330,7 @@ class GraphWriter(nn.Module):
             node_features.append(combined_feat)
         
         node_features = torch.stack(node_features)  # [num_entities, node_dim]
+        node_features = node_features.to(device)  # 确保在正确设备上
         node_features = self.layer_norm(node_features)
         
         return node_features
