@@ -108,7 +108,7 @@ class GDMNetTrainer(pl.LightningModule):
         preds = torch.argmax(logits, dim=1)
 
         # Debug info for first few batches
-        if batch_idx < 5:
+        if batch_idx < 2:
             print(f"Batch {batch_idx} debug:")
             print(f"  Logits shape: {logits.shape}")
             print(f"  Labels: {labels}")

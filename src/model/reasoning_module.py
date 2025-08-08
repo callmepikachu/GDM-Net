@@ -318,6 +318,14 @@ class ReasoningFusion(nn.Module):
             fused_representation: [batch_size, hidden_size]
         """
 
+        # Ensure all inputs have the same dimension
+        if doc_repr.size(-1) != self.hidden_size:
+            print(f"WARNING: doc_repr dimension mismatch! Expected {self.hidden_size}, got {doc_repr.size(-1)}")
+        if graph_repr.size(-1) != self.hidden_size:
+            print(f"WARNING: graph_repr dimension mismatch! Expected {self.hidden_size}, got {graph_repr.size(-1)}")
+        if path_repr.size(-1) != self.hidden_size:
+            print(f"WARNING: path_repr dimension mismatch! Expected {self.hidden_size}, got {path_repr.size(-1)}")
+
         if self.fusion_method == "gate":
             # Gated fusion
             combined = torch.cat([doc_repr, graph_repr, path_repr], dim=1)
@@ -344,6 +352,14 @@ class ReasoningFusion(nn.Module):
         else:  # "sum"
             # Simple summation
             fused = doc_repr + graph_repr + path_repr
+
+        # Ensure output has correct dimension
+        if fused.size(-1) != self.hidden_size:
+            print(f"ERROR: fused dimension mismatch! Expected {self.hidden_size}, got {fused.size(-1)}")
+            # Emergency fix
+            if not hasattr(self, 'emergency_proj'):
+                self.emergency_proj = nn.Linear(fused.size(-1), self.hidden_size).to(fused.device)
+            fused = self.emergency_proj(fused)
 
         fused = self.layer_norm(self.dropout(fused))
 

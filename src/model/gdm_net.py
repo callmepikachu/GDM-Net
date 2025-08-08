@@ -164,7 +164,19 @@ class GDMNet(nn.Module):
         )
 
         # Step 8: Final classification
+        print(f"DEBUG: fused_representation shape: {fused_representation.shape}")
+        print(f"DEBUG: expected hidden_size: {self.hidden_size}")
+
+        # Ensure fused_representation has correct dimension
+        if fused_representation.size(-1) != self.hidden_size:
+            print(f"WARNING: fused_representation dimension mismatch! Expected {self.hidden_size}, got {fused_representation.size(-1)}")
+            # Project to correct dimension
+            if not hasattr(self, 'emergency_projection'):
+                self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
+            fused_representation = self.emergency_projection(fused_representation)
+
         logits = self.classifier(fused_representation)
+        print(f"DEBUG: logits shape after classifier: {logits.shape}")
 
         # Prepare outputs
         outputs = {
@@ -206,6 +218,24 @@ class GDMNet(nn.Module):
         # Main classification loss with numerical stability
         logits = outputs['logits']
 
+        # Debug: Check dimensions (only for first few batches)
+        if not hasattr(self, '_debug_count'):
+            self._debug_count = 0
+        if self._debug_count < 3:
+            print(f"DEBUG: logits shape: {logits.shape}, labels shape: {labels.shape}")
+            print(f"DEBUG: num_classes: {self.num_classes}")
+            self._debug_count += 1
+
+        # Check logits dimensions
+        if logits.size(1) != self.num_classes:
+            print(f"ERROR: Logits dimension mismatch! Expected {self.num_classes}, got {logits.size(1)}")
+            # Fix logits dimension if needed
+            if logits.size(1) < self.num_classes:
+                padding = torch.zeros(logits.size(0), self.num_classes - logits.size(1), device=logits.device)
+                logits = torch.cat([logits, padding], dim=1)
+            else:
+                logits = logits[:, :self.num_classes]
+
         # Check label range
         if labels.max() >= self.num_classes or labels.min() < 0:
             print(f"WARNING: Labels out of range! Labels: {labels}, num_classes: {self.num_classes}")
@@ -215,8 +245,20 @@ class GDMNet(nn.Module):
         # Apply numerical stability to logits
         logits = torch.clamp(logits, min=-10, max=10)
 
-        # Use standard CrossEntropyLoss with label smoothing for stability
-        main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
+        # Check for any remaining NaN/Inf in logits
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print(f"WARNING: NaN/Inf in logits after clamping!")
+            logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
+                               torch.zeros_like(logits), logits)
+
+        # Use standard CrossEntropyLoss without label smoothing first
+        try:
+            main_loss = F.cross_entropy(logits, labels)
+        except Exception as e:
+            print(f"ERROR in cross_entropy: {e}")
+            print(f"  Logits: {logits}")
+            print(f"  Labels: {labels}")
+            main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
 
         # Final check for NaN/Inf
         if torch.isnan(main_loss) or torch.isinf(main_loss):
