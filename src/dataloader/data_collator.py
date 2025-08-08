@@ -41,12 +41,12 @@ class GDMNetDataCollator:
         if 'relation_labels' in batch[0]:
             relation_labels = [item['relation_labels'] for item in batch]
             # Handle variable length relation labels
-            max_relations = max(len(rel_labels) for rel_labels in relation_labels)
+            max_relations = max(len(rel_labels) for rel_labels in relation_labels) if relation_labels else 1
             if max_relations > 0:
                 padded_relation_labels = []
                 for rel_labels in relation_labels:
                     if len(rel_labels) < max_relations:
-                        padding = torch.zeros(max_relations - len(rel_labels), dtype=rel_labels.dtype)
+                        padding = torch.zeros(max_relations - len(rel_labels), dtype=rel_labels.dtype, device=rel_labels.device)
                         padded = torch.cat([rel_labels, padding])
                     else:
                         padded = rel_labels[:max_relations]

@@ -43,8 +43,15 @@ class GDMNetTrainer(pl.LightningModule):
         self.val_dataset = val_dataset
         
         # Metrics tracking
-        self.train_accuracy = pl.metrics.Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
-        self.val_accuracy = pl.metrics.Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
+        try:
+            from torchmetrics import Accuracy
+            self.train_accuracy = Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
+            self.val_accuracy = Accuracy(task='multiclass', num_classes=config['model']['num_classes'])
+        except ImportError:
+            # Fallback for older versions
+            from pytorch_lightning.metrics import Accuracy
+            self.train_accuracy = Accuracy()
+            self.val_accuracy = Accuracy()
         
         # Logger
         self.logger_instance = setup_logger("GDMNetTrainer")

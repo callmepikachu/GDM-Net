@@ -5,46 +5,64 @@ Quick test script to verify model functionality.
 
 import torch
 import json
+import os
 from src.model import GDMNet
 from src.dataloader import HotpotQADataset, GDMNetDataCollator
 from src.utils import load_config
 from torch.utils.data import DataLoader
 
+# Set environment variables for Chinese mirror
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
+
 
 def test_model_forward():
     """Test model forward pass."""
     print("Testing model forward pass...")
-    
-    # Load config
-    config = load_config('config/default_config.yaml')
-    
-    # Initialize model
-    model = GDMNet(**config['model'])
-    model.eval()
-    
-    # Create dummy batch
-    batch_size = 2
-    seq_len = 128
-    num_entities = config['model']['num_entities']
-    
-    dummy_batch = {
-        'query_input_ids': torch.randint(0, 1000, (batch_size, 64)),
-        'query_attention_mask': torch.ones(batch_size, 64),
-        'doc_input_ids': torch.randint(0, 1000, (batch_size, seq_len)),
-        'doc_attention_mask': torch.ones(batch_size, seq_len),
-        'entity_spans': torch.randint(0, seq_len, (batch_size, num_entities, 2)),
-        'labels': torch.randint(0, config['model']['num_classes'], (batch_size,))
-    }
-    
-    # Forward pass
-    with torch.no_grad():
-        outputs = model(**dummy_batch)
-    
-    print(f"✓ Model forward pass successful")
-    print(f"  Output logits shape: {outputs['logits'].shape}")
-    print(f"  Expected shape: ({batch_size}, {config['model']['num_classes']})")
-    
-    return True
+
+    try:
+        # Load config
+        config = load_config('config/default_config.yaml')
+
+        # Initialize model
+        model = GDMNet(**config['model'])
+        model.eval()
+
+        # Create dummy batch
+        batch_size = 2
+        seq_len = 128
+        num_entities = config['model']['num_entities']
+
+        # Ensure entity spans are valid
+        entity_spans = torch.zeros(batch_size, num_entities, 2, dtype=torch.long)
+        for b in range(batch_size):
+            for e in range(num_entities):
+                start = torch.randint(0, seq_len - 10, (1,)).item()
+                end = start + torch.randint(1, 10, (1,)).item()
+                entity_spans[b, e] = torch.tensor([start, min(end, seq_len - 1)])
+
+        dummy_batch = {
+            'query_input_ids': torch.randint(1, 1000, (batch_size, 64)),
+            'query_attention_mask': torch.ones(batch_size, 64),
+            'doc_input_ids': torch.randint(1, 1000, (batch_size, seq_len)),
+            'doc_attention_mask': torch.ones(batch_size, seq_len),
+            'entity_spans': entity_spans,
+            'labels': torch.randint(0, config['model']['num_classes'], (batch_size,))
+        }
+
+        # Forward pass
+        with torch.no_grad():
+            outputs = model(**dummy_batch)
+
+        print(f"✓ Model forward pass successful")
+        print(f"  Output logits shape: {outputs['logits'].shape}")
+        print(f"  Expected shape: ({batch_size}, {config['model']['num_classes']})")
+
+        return True
+
+    except Exception as e:
+        print(f"✗ Model forward pass failed: {str(e)}")
+        return False
 
 
 def test_dataset_loading():
@@ -110,12 +128,20 @@ def test_training_step():
         seq_len = 128
         num_entities = config['model']['num_entities']
         
+        # Create valid entity spans
+        entity_spans = torch.zeros(batch_size, num_entities, 2, dtype=torch.long)
+        for b in range(batch_size):
+            for e in range(num_entities):
+                start = torch.randint(0, seq_len - 10, (1,)).item()
+                end = start + torch.randint(1, 10, (1,)).item()
+                entity_spans[b, e] = torch.tensor([start, min(end, seq_len - 1)])
+
         dummy_batch = {
-            'query_input_ids': torch.randint(0, 1000, (batch_size, 64)),
+            'query_input_ids': torch.randint(1, 1000, (batch_size, 64)),
             'query_attention_mask': torch.ones(batch_size, 64),
-            'doc_input_ids': torch.randint(0, 1000, (batch_size, seq_len)),
+            'doc_input_ids': torch.randint(1, 1000, (batch_size, seq_len)),
             'doc_attention_mask': torch.ones(batch_size, seq_len),
-            'entity_spans': torch.randint(0, seq_len, (batch_size, num_entities, 2)),
+            'entity_spans': entity_spans,
             'labels': torch.randint(0, config['model']['num_classes'], (batch_size,))
         }
         

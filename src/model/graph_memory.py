@@ -84,11 +84,14 @@ class GraphWriter(nn.Module):
                 text_repr = entity['representation']
 
                 # Entity type embedding
-                entity_type = torch.tensor(entity['type'], device=device)
+                entity_type = int(entity['type']) if isinstance(entity['type'], (int, float)) else 0
+                entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
                 type_repr = self.entity_type_embedding(entity_type)
 
                 # Position embedding
-                position = torch.tensor(entity['span'][0], device=device)
+                position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
+                position = min(position, 511)  # Clamp to max position
+                position = torch.tensor(position, device=device, dtype=torch.long)
                 pos_repr = self.position_embedding(position)
 
                 # Combine features
@@ -105,9 +108,9 @@ class GraphWriter(nn.Module):
             batch_edge_types = []
 
             for relation in relations:
-                head = relation['head']
-                tail = relation['tail']
-                rel_type = relation['type']
+                head = int(relation['head'])
+                tail = int(relation['tail'])
+                rel_type = int(relation['type']) if isinstance(relation['type'], (int, float)) else 1
 
                 if head < num_entities and tail < num_entities:
                     # Add forward edge

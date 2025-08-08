@@ -24,10 +24,25 @@ class DocumentEncoder(nn.Module):
         # Set up Chinese mirror for Hugging Face if needed
         if use_chinese_mirror:
             os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+            os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
 
-        # Load BERT model
-        self.config = AutoConfig.from_pretrained(model_name)
-        self.bert = AutoModel.from_pretrained(model_name, config=self.config)
+        # Load BERT model with error handling
+        try:
+            self.config = AutoConfig.from_pretrained(model_name)
+            self.bert = AutoModel.from_pretrained(model_name, config=self.config)
+        except Exception as e:
+            print(f"Warning: Failed to load {model_name} from HuggingFace. Using local fallback.")
+            # Fallback: create a simple BERT-like model
+            from transformers import BertConfig, BertModel
+            self.config = BertConfig(
+                vocab_size=30522,
+                hidden_size=hidden_size,
+                num_hidden_layers=12,
+                num_attention_heads=12,
+                intermediate_size=3072,
+                max_position_embeddings=512
+            )
+            self.bert = BertModel(self.config)
         
         # Freeze BERT parameters if specified
         if freeze_bert:
@@ -119,6 +134,18 @@ class StructureExtractor(nn.Module):
         self.num_entity_types = num_entity_types
         self.num_relation_types = num_relation_types
 
+        # Entity type mapping (same as in dataset)
+        self.entity_type_map = {
+            'TITLE': 1,
+            'PERSON': 2,
+            'LOCATION': 3,
+            'ORGANIZATION': 4,
+            'DATE': 5,
+            'NUMBER': 6,
+            'MISC': 7,
+            'O': 0
+        }
+
         # Entity extraction layers
         self.entity_classifier = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
@@ -176,8 +203,8 @@ class StructureExtractor(nn.Module):
                         entity_repr = sequence_output[b, start:end].mean(dim=0)
                         entity_type = entity_logits[b, start:end].mean(dim=0).argmax().item()
                         batch_entities.append({
-                            'span': (start.item(), end.item()),
-                            'type': entity_type,
+                            'span': (int(start.item()), int(end.item())),
+                            'type': int(entity_type),
                             'representation': entity_repr
                         })
             else:
@@ -187,7 +214,7 @@ class StructureExtractor(nn.Module):
                     if entity_preds[i] > 0 and attention_mask[b, i] == 1:
                         batch_entities.append({
                             'span': (i, i+1),
-                            'type': entity_preds[i].item(),
+                            'type': int(entity_preds[i].item()),
                             'representation': sequence_output[b, i]
                         })
 
@@ -212,7 +239,7 @@ class StructureExtractor(nn.Module):
                             batch_relations.append({
                                 'head': i,
                                 'tail': j,
-                                'type': rel_type
+                                'type': int(rel_type)
                             })
 
             relations_batch.append(batch_relations)

@@ -9,7 +9,7 @@ from ..utils.graph_utils import build_graph
 
 class HotpotQADataset(Dataset):
     """HotpotQA dataset for multi-document reasoning."""
-    
+
     def __init__(
         self,
         data_path: str,
@@ -24,13 +24,39 @@ class HotpotQADataset(Dataset):
         self.max_query_length = max_query_length
         self.num_entities = num_entities
         self.num_relations = num_relations
-        
-        # Initialize tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        
+
+        # Entity type mapping
+        self.entity_type_map = {
+            'TITLE': 1,
+            'PERSON': 2,
+            'LOCATION': 3,
+            'ORGANIZATION': 4,
+            'DATE': 5,
+            'NUMBER': 6,
+            'MISC': 7,
+            'O': 0  # Outside entity
+        }
+
+        # Relation type mapping
+        self.relation_type_map = {
+            'NO_RELATION': 0,
+            'RELATED': 1,
+            'TEMPORAL': 2,
+            'CAUSAL': 3,
+            'SPATIAL': 4
+        }
+
+        # Initialize tokenizer with error handling
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        except Exception as e:
+            print(f"Warning: Failed to load tokenizer {tokenizer_name}. Using fallback.")
+            from transformers import BertTokenizer
+            self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', local_files_only=False)
+
         # Load data
         self.data = self._load_data()
-        
+
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(f"Loaded {len(self.data)} samples from {data_path}")
     
@@ -77,7 +103,10 @@ class HotpotQADataset(Dataset):
         entity_spans = torch.zeros(self.num_entities, 2, dtype=torch.long)
         for i, entity in enumerate(entities[:self.num_entities]):
             span = entity.get('span', [0, 0])
-            entity_spans[i] = torch.tensor(span, dtype=torch.long)
+            # Ensure span values are integers and within bounds
+            start = min(max(int(span[0]), 0), self.max_length - 1)
+            end = min(max(int(span[1]), start + 1), self.max_length)
+            entity_spans[i] = torch.tensor([start, end], dtype=torch.long)
         
         # Create entity and relation labels for auxiliary tasks (optional)
         entity_labels = torch.zeros(doc_encoding['input_ids'].size(1), dtype=torch.long)
@@ -86,14 +115,22 @@ class HotpotQADataset(Dataset):
         # Simple entity labeling based on spans
         for i, entity in enumerate(entities[:self.num_entities]):
             span = entity.get('span', [0, 0])
-            start, end = span[0], span[1]
-            if start < entity_labels.size(0) and end <= entity_labels.size(0) and start < end:
-                entity_labels[start:end] = entity.get('type', 1)  # Non-zero for entity
+            start, end = int(span[0]), int(span[1])
+            start = min(max(start, 0), entity_labels.size(0) - 1)
+            end = min(max(end, start + 1), entity_labels.size(0))
+            if start < end:
+                # Map string type to integer
+                entity_type_str = entity.get('type', 'O')
+                entity_type_id = self.entity_type_map.get(entity_type_str, 0)
+                entity_labels[start:end] = entity_type_id
 
         # Simple relation labeling
         for i, relation in enumerate(relations):
             if i < relation_labels.size(0):
-                relation_labels[i] = relation.get('type', 1)  # Non-zero for relation
+                # Map string type to integer
+                relation_type_str = relation.get('type', 'NO_RELATION')
+                relation_type_id = self.relation_type_map.get(relation_type_str, 0)
+                relation_labels[i] = relation_type_id
 
         return {
             'query_input_ids': query_encoding['input_ids'].squeeze(0),
