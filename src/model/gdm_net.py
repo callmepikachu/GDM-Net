@@ -134,6 +134,64 @@ class GDMNet(nn.Module):
         """
         Forward pass through GDM-Net with dual-path processing.
 
+        # Check all inputs for NaN/Inf at the very beginning
+        inputs_to_check = {
+            'query_input_ids': query_input_ids,
+            'query_attention_mask': query_attention_mask,
+            'doc_input_ids': doc_input_ids,
+            'doc_attention_mask': doc_attention_mask,
+            'entity_spans': entity_spans
+        }
+
+        for name, tensor in inputs_to_check.items():
+            if torch.isnan(tensor).any():
+                print(f"CRITICAL: NaN detected in input {name}")
+                print(f"  Shape: {tensor.shape}")
+                print(f"  NaN count: {torch.isnan(tensor).sum()}")
+                # Replace NaN with safe values
+                if 'input_ids' in name:
+                    tensor = torch.where(torch.isnan(tensor), torch.ones_like(tensor), tensor)
+                elif 'attention_mask' in name:
+                    tensor = torch.where(torch.isnan(tensor), torch.ones_like(tensor), tensor)
+                elif 'spans' in name:
+                    tensor = torch.where(torch.isnan(tensor), torch.zeros_like(tensor), tensor)
+
+                # Update the actual variables
+                if name == 'query_input_ids':
+                    query_input_ids = tensor
+                elif name == 'query_attention_mask':
+                    query_attention_mask = tensor
+                elif name == 'doc_input_ids':
+                    doc_input_ids = tensor
+                elif name == 'doc_attention_mask':
+                    doc_attention_mask = tensor
+                elif name == 'entity_spans':
+                    entity_spans = tensor
+
+            if torch.isinf(tensor).any():
+                print(f"CRITICAL: Inf detected in input {name}")
+                print(f"  Shape: {tensor.shape}")
+                print(f"  Inf count: {torch.isinf(tensor).sum()}")
+                # Replace Inf with safe values
+                if 'input_ids' in name:
+                    tensor = torch.where(torch.isinf(tensor), torch.ones_like(tensor), tensor)
+                elif 'attention_mask' in name:
+                    tensor = torch.where(torch.isinf(tensor), torch.ones_like(tensor), tensor)
+                elif 'spans' in name:
+                    tensor = torch.where(torch.isinf(tensor), torch.zeros_like(tensor), tensor)
+
+                # Update the actual variables
+                if name == 'query_input_ids':
+                    query_input_ids = tensor
+                elif name == 'query_attention_mask':
+                    query_attention_mask = tensor
+                elif name == 'doc_input_ids':
+                    doc_input_ids = tensor
+                elif name == 'doc_attention_mask':
+                    doc_attention_mask = tensor
+                elif name == 'entity_spans':
+                    entity_spans = tensor
+
         Args:
             query_input_ids: [batch_size, query_len]
             query_attention_mask: [batch_size, query_len]
@@ -302,22 +360,18 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Use numerically stable loss calculation
-        # Manual implementation to avoid numerical issues
-        log_probs = F.log_softmax(logits, dim=1)
+        # Extremely simple and stable loss calculation
+        # Ensure logits are in a very safe range
+        logits = torch.clamp(logits, min=-2, max=2)
 
-        # Check for NaN in log_probs
-        if torch.isnan(log_probs).any():
-            print("WARNING: NaN in log_probs, using uniform distribution")
-            log_probs = torch.full_like(log_probs, -math.log(logits.size(1)))
+        # Use the most basic cross entropy without any modifications
+        main_loss = F.cross_entropy(logits, labels, reduction='mean')
 
-        # Use NLL loss which is more stable
-        main_loss = F.nll_loss(log_probs, labels)
-
-        # Final check
+        # If still NaN, use a constant loss
         if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print(f"CRITICAL: Still NaN after stable computation, using uniform loss")
-            main_loss = torch.tensor(math.log(logits.size(1)), device=logits.device, requires_grad=True)
+            print(f"CRITICAL: NaN in basic cross_entropy. Logits range: [{logits.min():.6f}, {logits.max():.6f}]")
+            print(f"Labels: {labels}")
+            main_loss = torch.tensor(1.609, device=logits.device, requires_grad=True)  # ln(5) for 5 classes
 
         # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):

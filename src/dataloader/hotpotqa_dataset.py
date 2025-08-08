@@ -202,7 +202,8 @@ class HotpotQADataset(Dataset):
                 relation_type_id = self.relation_type_map.get(relation_type_str, 0)
                 relation_labels[i] = relation_type_id
 
-        return {
+        # Create the return dictionary
+        result = {
             'query_input_ids': query_encoding['input_ids'].squeeze(0),
             'query_attention_mask': query_encoding['attention_mask'].squeeze(0),
             'doc_input_ids': doc_encoding['input_ids'].squeeze(0),
@@ -213,5 +214,32 @@ class HotpotQADataset(Dataset):
             'label': torch.tensor(label, dtype=torch.long),
             'metadata': sample.get('metadata', {})
         }
+
+        # Check for NaN/Inf in the data before returning
+        for key, tensor in result.items():
+            if isinstance(tensor, torch.Tensor):
+                if torch.isnan(tensor).any():
+                    print(f"WARNING: NaN detected in dataset output {key} at sample {idx}")
+                    print(f"  NaN count: {torch.isnan(tensor).sum()}")
+                    # Replace NaN with safe values
+                    if 'input_ids' in key:
+                        result[key] = torch.where(torch.isnan(tensor), torch.ones_like(tensor), tensor)
+                    elif 'attention_mask' in key:
+                        result[key] = torch.where(torch.isnan(tensor), torch.ones_like(tensor), tensor)
+                    else:
+                        result[key] = torch.where(torch.isnan(tensor), torch.zeros_like(tensor), tensor)
+
+                if torch.isinf(tensor).any():
+                    print(f"WARNING: Inf detected in dataset output {key} at sample {idx}")
+                    print(f"  Inf count: {torch.isinf(tensor).sum()}")
+                    # Replace Inf with safe values
+                    if 'input_ids' in key:
+                        result[key] = torch.where(torch.isinf(tensor), torch.ones_like(tensor), tensor)
+                    elif 'attention_mask' in key:
+                        result[key] = torch.where(torch.isinf(tensor), torch.ones_like(tensor), tensor)
+                    else:
+                        result[key] = torch.where(torch.isinf(tensor), torch.zeros_like(tensor), tensor)
+
+        return result
     
 

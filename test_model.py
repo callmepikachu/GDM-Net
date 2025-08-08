@@ -328,6 +328,110 @@ def test_training_step():
         return False
 
 
+def check_data_quality():
+    """检查数据质量，查找NaN/Inf和标签范围问题"""
+    print("\n🔍 数据质量检查")
+    print("=" * 80)
+
+    try:
+        # Load config
+        config = load_config('config/default_config.yaml')
+
+        # Load dataset
+        dataset = HotpotQADataset(
+            data_path=config['data']['train_path'],
+            tokenizer_name=config['model']['bert_model_name'],
+            max_length=config['data']['max_length'],
+            max_query_length=config['data']['max_query_length'],
+            num_entities=config['model']['num_entities']
+        )
+
+        print(f"检查数据集，总样本数: {len(dataset)}")
+
+        # Check first 100 samples for issues
+        nan_samples = []
+        inf_samples = []
+        label_issues = []
+
+        for i in range(min(100, len(dataset))):
+            try:
+                sample = dataset[i]
+
+                # Check each tensor for NaN/Inf
+                for key, value in sample.items():
+                    if isinstance(value, torch.Tensor):
+                        if torch.isnan(value).any():
+                            nan_samples.append((i, key, torch.isnan(value).sum().item()))
+                            print(f"  样本 {i}: {key} 包含 {torch.isnan(value).sum()} 个 NaN")
+
+                        if torch.isinf(value).any():
+                            inf_samples.append((i, key, torch.isinf(value).sum().item()))
+                            print(f"  样本 {i}: {key} 包含 {torch.isinf(value).sum()} 个 Inf")
+
+                # Check label range
+                label = sample['label']
+                if label < 0 or label >= config['model']['num_classes']:
+                    label_issues.append((i, label.item()))
+                    print(f"  样本 {i}: 标签 {label} 超出范围 [0, {config['model']['num_classes']-1}]")
+
+            except Exception as e:
+                print(f"  样本 {i}: 处理错误 - {e}")
+
+        # Summary
+        print(f"\n📊 检查结果:")
+        print(f"  NaN问题样本: {len(nan_samples)}")
+        print(f"  Inf问题样本: {len(inf_samples)}")
+        print(f"  标签范围问题: {len(label_issues)}")
+
+        if nan_samples:
+            print(f"\n❌ 发现NaN问题:")
+            for sample_id, key, count in nan_samples[:5]:  # 显示前5个
+                print(f"    样本{sample_id}.{key}: {count}个NaN")
+
+        if inf_samples:
+            print(f"\n❌ 发现Inf问题:")
+            for sample_id, key, count in inf_samples[:5]:  # 显示前5个
+                print(f"    样本{sample_id}.{key}: {count}个Inf")
+
+        if label_issues:
+            print(f"\n❌ 发现标签问题:")
+            for sample_id, label_val in label_issues[:5]:  # 显示前5个
+                print(f"    样本{sample_id}: 标签={label_val}")
+
+        if not nan_samples and not inf_samples and not label_issues:
+            print("✅ 前100个样本数据质量良好")
+
+        # Check a batch from dataloader
+        print(f"\n🔄 检查DataLoader批次...")
+        collator = GDMNetDataCollator()
+        dataloader = DataLoader(dataset, batch_size=8, shuffle=False, collate_fn=collator)
+
+        batch = next(iter(dataloader))
+        batch_issues = []
+
+        for key, value in batch.items():
+            if isinstance(value, torch.Tensor):
+                if torch.isnan(value).any():
+                    batch_issues.append(f"{key}: {torch.isnan(value).sum()}个NaN")
+                if torch.isinf(value).any():
+                    batch_issues.append(f"{key}: {torch.isinf(value).sum()}个Inf")
+
+        if batch_issues:
+            print("❌ 批次数据问题:")
+            for issue in batch_issues:
+                print(f"    {issue}")
+        else:
+            print("✅ 批次数据质量良好")
+
+        return len(nan_samples) == 0 and len(inf_samples) == 0 and len(label_issues) == 0
+
+    except Exception as e:
+        print(f"✗ 数据质量检查失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def test_intermediate_results():
     """专门测试和展示GDM-Net的中间结果"""
     print("\n🔬 GDM-Net 中间结果详细分析")
@@ -465,6 +569,7 @@ def main():
     tests = [
         test_model_forward,
         test_dataset_loading,
+        check_data_quality,  # 添加数据质量检查
         test_training_step,
         test_intermediate_results  # 添加中间结果展示
     ]
