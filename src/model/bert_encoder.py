@@ -21,17 +21,27 @@ class DocumentEncoder(nn.Module):
         self.model_name = model_name
         self.hidden_size = hidden_size
 
-        # Set up Chinese mirror for Hugging Face if needed
-        if use_chinese_mirror:
-            os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-            os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
+        # Try to load from local models directory first
+        local_model_path = "models"
 
-        # Load BERT model with error handling
         try:
-            self.config = AutoConfig.from_pretrained(model_name)
-            self.bert = AutoModel.from_pretrained(model_name, config=self.config)
+            if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "config.json")):
+                print(f"Loading BERT model from local path: {local_model_path}")
+                self.config = AutoConfig.from_pretrained(local_model_path)
+                self.bert = AutoModel.from_pretrained(local_model_path, config=self.config, local_files_only=True)
+            else:
+                # Set up Chinese mirror for Hugging Face if needed
+                if use_chinese_mirror:
+                    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+                    os.environ['HUGGINGFACE_HUB_CACHE'] = '/tmp/huggingface_cache'
+
+                print(f"Loading BERT model from HuggingFace: {model_name}")
+                self.config = AutoConfig.from_pretrained(model_name)
+                self.bert = AutoModel.from_pretrained(model_name, config=self.config)
+
         except Exception as e:
-            print(f"Warning: Failed to load {model_name} from HuggingFace. Using local fallback.")
+            print(f"Warning: Failed to load {model_name} from both local and HuggingFace. Using fallback model.")
+            print(f"Error: {str(e)}")
             # Fallback: create a simple BERT-like model with correct hidden size
             from transformers import BertConfig, BertModel
             self.config = BertConfig(

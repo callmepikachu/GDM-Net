@@ -1,5 +1,6 @@
 import json
 import torch
+import os
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from typing import List, Dict, Any, Optional
@@ -46,11 +47,20 @@ class HotpotQADataset(Dataset):
             'SPATIAL': 4
         }
 
-        # Initialize tokenizer with error handling
+        # Initialize tokenizer with error handling - try local first
+        local_model_path = "models"
+
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "tokenizer.json")):
+                print(f"Loading tokenizer from local path: {local_model_path}")
+                self.tokenizer = AutoTokenizer.from_pretrained(local_model_path, local_files_only=True)
+            else:
+                print(f"Loading tokenizer from HuggingFace: {tokenizer_name}")
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+
         except Exception as e:
-            print(f"Warning: Failed to load tokenizer {tokenizer_name}. Creating basic tokenizer.")
+            print(f"Warning: Failed to load tokenizer from both local and HuggingFace. Creating basic tokenizer.")
+            print(f"Error: {str(e)}")
             # Create a basic tokenizer with required methods
             class BasicTokenizer:
                 def __init__(self):
