@@ -31,10 +31,38 @@ import wandb
 
 # Import GDM-Net components
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import os
 
-from gdmnet import GDMNet
-from dataset import create_data_loaders, create_synthetic_dataset
+# Add project root to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))  # src/train/
+src_dir = os.path.dirname(current_dir)  # src/
+project_root = os.path.dirname(src_dir)  # project root
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Now import our modules
+try:
+    from src.model.model import GDMNet
+    from src.dataloader.dataset import create_data_loaders, create_synthetic_dataset
+    print("✅ All imports successful!")
+except ImportError as e:
+    print(f"❌ Import error: {e}")
+    print(f"📁 Current working directory: {os.getcwd()}")
+    print(f"📁 Project root: {project_root}")
+    print(f"🐍 Python path: {sys.path[:3]}...")
+
+    # Try alternative import methods
+    print("\n🔄 Trying alternative imports...")
+    try:
+        # Try importing from current directory structure
+        import sys
+        sys.path.insert(0, os.path.join(project_root, 'src'))
+        from model.model import GDMNet
+        from dataloader.dataset import create_data_loaders, create_synthetic_dataset
+        print("✅ Alternative imports successful!")
+    except ImportError as e2:
+        print(f"❌ Alternative import also failed: {e2}")
+        raise e
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
