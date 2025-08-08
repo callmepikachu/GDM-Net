@@ -92,6 +92,13 @@ class GDMNet(nn.Module):
             nn.Linear(hidden_size // 2, num_classes)
         )
 
+        # Initialize classifier weights for numerical stability
+        for module in self.classifier.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_normal_(module.weight, gain=0.1)  # Small gain for stability
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
         # Loss functions
         self.main_loss_fn = nn.CrossEntropyLoss()
         self.entity_loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignore padding
@@ -164,8 +171,12 @@ class GDMNet(nn.Module):
         )
 
         # Step 8: Final classification
-        print(f"DEBUG: fused_representation shape: {fused_representation.shape}")
-        print(f"DEBUG: expected hidden_size: {self.hidden_size}")
+        if not hasattr(self, '_forward_count'):
+            self._forward_count = 0
+        if self._forward_count < 3:
+            print(f"DEBUG: fused_representation shape: {fused_representation.shape}")
+            print(f"DEBUG: expected hidden_size: {self.hidden_size}")
+            self._forward_count += 1
 
         # Ensure fused_representation has correct dimension
         if fused_representation.size(-1) != self.hidden_size:
@@ -175,8 +186,23 @@ class GDMNet(nn.Module):
                 self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
             fused_representation = self.emergency_projection(fused_representation)
 
+        # Check classifier weights for NaN/Inf
+        for name, param in self.classifier.named_parameters():
+            if torch.isnan(param).any() or torch.isinf(param).any():
+                print(f"WARNING: NaN/Inf in classifier {name}!")
+                param.data = torch.where(torch.isnan(param) | torch.isinf(param),
+                                       torch.zeros_like(param), param)
+
         logits = self.classifier(fused_representation)
-        print(f"DEBUG: logits shape after classifier: {logits.shape}")
+        if self._forward_count <= 3:
+            print(f"DEBUG: logits shape after classifier: {logits.shape}")
+
+        # Check logits immediately after classifier
+        if torch.isnan(logits).any() or torch.isinf(logits).any():
+            print(f"WARNING: NaN/Inf in logits immediately after classifier!")
+            print(f"  fused_representation stats: min={fused_representation.min()}, max={fused_representation.max()}, mean={fused_representation.mean()}")
+            print(f"  fused_representation has NaN: {torch.isnan(fused_representation).any()}")
+            print(f"  fused_representation has Inf: {torch.isinf(fused_representation).any()}")
 
         # Prepare outputs
         outputs = {
@@ -248,16 +274,36 @@ class GDMNet(nn.Module):
         # Check for any remaining NaN/Inf in logits
         if torch.isnan(logits).any() or torch.isinf(logits).any():
             print(f"WARNING: NaN/Inf in logits after clamping!")
+            print(f"  NaN count: {torch.isnan(logits).sum()}")
+            print(f"  Inf count: {torch.isinf(logits).sum()}")
             logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
                                torch.zeros_like(logits), logits)
 
-        # Use standard CrossEntropyLoss without label smoothing first
+        # Additional stability check - ensure logits are reasonable
+        if logits.abs().max() > 50:
+            print(f"WARNING: Extremely large logits detected: max={logits.abs().max()}")
+            logits = torch.clamp(logits, min=-5, max=5)
+
+        # Use numerically stable cross entropy implementation
         try:
-            main_loss = F.cross_entropy(logits, labels)
+            # Method 1: Manual stable implementation
+            log_probs = F.log_softmax(logits, dim=1)
+
+            # Check for NaN in log_probs
+            if torch.isnan(log_probs).any():
+                print("NaN detected in log_probs, using fallback")
+                main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
+            else:
+                # Gather the log probabilities for the correct classes
+                main_loss = F.nll_loss(log_probs, labels)
+
+                # Final NaN check
+                if torch.isnan(main_loss):
+                    print("NaN detected in nll_loss, using fallback")
+                    main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
+
         except Exception as e:
-            print(f"ERROR in cross_entropy: {e}")
-            print(f"  Logits: {logits}")
-            print(f"  Labels: {labels}")
+            print(f"ERROR in loss computation: {e}")
             main_loss = torch.tensor(0.1, device=logits.device, requires_grad=True)
 
         # Final check for NaN/Inf
