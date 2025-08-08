@@ -273,13 +273,14 @@ class GraphWriter(nn.Module):
             
             # Create batch indices
             num_nodes = len(batch_entities)
-            batch_indices = torch.full((num_nodes,), b, dtype=torch.long, device=encoded_docs.device)
+            device = next(self.parameters()).device
+            batch_indices = torch.full((num_nodes,), b, dtype=torch.long, device=device)
             all_batch_indices.append(batch_indices)
             
             node_offset += num_nodes
         
         # Concatenate all features (确保设备一致性)
-        device = encoded_docs.device
+        device = next(self.parameters()).device
         node_features = torch.cat(all_node_features, dim=0) if all_node_features else torch.empty(0, self.node_dim, device=device)
         edge_index = torch.cat(all_edge_indices, dim=1) if all_edge_indices else torch.empty(2, 0, dtype=torch.long, device=device)
         edge_type = torch.cat(all_edge_types, dim=0) if all_edge_types else torch.empty(0, dtype=torch.long, device=device)
