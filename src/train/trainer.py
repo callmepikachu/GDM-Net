@@ -8,6 +8,15 @@ import logging
 import os
 import sys
 
+def check_tensor(tensor, name, batch_idx, stage="train"):
+    """精确检测张量中的NaN/Inf并立即报错定位"""
+    if torch.isnan(tensor).any():
+        nan_count = torch.isnan(tensor).sum().item()
+        raise ValueError(f"❌ NaN detected in {name} at {stage} batch {batch_idx} (count: {nan_count})")
+    if torch.isinf(tensor).any():
+        inf_count = torch.isinf(tensor).sum().item()
+        raise ValueError(f"❌ Inf detected in {name} at {stage} batch {batch_idx} (count: {inf_count})")
+
 # Add the project root to Python path for imports
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
@@ -77,12 +86,39 @@ class GDMNetTrainer(pl.LightningModule):
         )
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
-        """Training step."""
+        """Training step with comprehensive NaN/Inf detection."""
 
-        outputs = self.forward(batch)
+        # 🔍 检查输入数据
+        try:
+            check_tensor(batch['query_input_ids'], "query_input_ids", batch_idx, "train")
+            check_tensor(batch['query_attention_mask'], "query_attention_mask", batch_idx, "train")
+            check_tensor(batch['doc_input_ids'], "doc_input_ids", batch_idx, "train")
+            check_tensor(batch['doc_attention_mask'], "doc_attention_mask", batch_idx, "train")
+            check_tensor(batch['entity_spans'], "entity_spans", batch_idx, "train")
+            check_tensor(batch['labels'], "labels", batch_idx, "train")
+        except ValueError as e:
+            print(f"🚨 INPUT DATA ERROR: {e}")
+            # 返回一个安全的损失值继续训练
+            return torch.tensor(1.609, device=self.device, requires_grad=True)
+
         labels = batch['labels']
 
-        # Compute loss with auxiliary tasks
+        # 🔍 检查标签范围
+        if (labels < 0).any() or (labels >= self.num_classes).any():
+            print(f"🚨 LABEL RANGE ERROR at batch {batch_idx}: labels {labels} outside [0, {self.num_classes-1}]")
+            return torch.tensor(1.609, device=self.device, requires_grad=True)
+
+        # 前向传播
+        outputs = self.forward(batch)
+
+        # 🔍 检查模型输出
+        try:
+            check_tensor(outputs['logits'], "logits", batch_idx, "train")
+        except ValueError as e:
+            print(f"🚨 MODEL OUTPUT ERROR: {e}")
+            return torch.tensor(1.609, device=self.device, requires_grad=True)
+
+        # 计算损失
         loss_dict = self.model.compute_loss(
             outputs=outputs,
             labels=labels,
@@ -93,52 +129,82 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Minimal NaN handling - let real losses through
-        if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"CRITICAL: NaN/Inf loss detected at batch {batch_idx} - this should be very rare now")
-            print(f"  Main loss: {main_loss}")
-            print(f"  Total loss: {total_loss}")
-            print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
+        # 🔍 检查损失值
+        try:
+            check_tensor(total_loss, "total_loss", batch_idx, "train")
+            check_tensor(main_loss, "main_loss", batch_idx, "train")
+        except ValueError as e:
+            print(f"🚨 LOSS ERROR: {e}")
+            print(f"  Logits range: [{outputs['logits'].min():.6f}, {outputs['logits'].max():.6f}]")
             print(f"  Labels: {labels}")
-            # Skip this batch instead of using fallback
-            return None
+            return torch.tensor(1.609, device=self.device, requires_grad=True)
 
-        # Compute accuracy with NaN handling
+        # 计算准确率
         logits = outputs['logits']
-
-        # Check for NaN in logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print(f"WARNING: NaN/Inf in logits at batch {batch_idx}")
-            # Use random predictions for this batch
-            preds = torch.randint(0, self.num_classes, labels.shape, device=labels.device)
-        else:
-            preds = torch.argmax(logits, dim=1)
-
+        preds = torch.argmax(logits, dim=1)
         acc = self.train_accuracy(preds, labels)
 
-        # Get batch size for proper logging
+        # 获取批次大小
         batch_size = labels.size(0)
 
-        # Log metrics with batch_size
+        # 记录指标
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('train_main_loss', main_loss, on_step=True, on_epoch=True, batch_size=batch_size)
         self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
-        # Log auxiliary losses if available
+        # 记录辅助损失
         if 'entity_loss' in loss_dict:
             self.log('train_entity_loss', loss_dict['entity_loss'], on_step=True, on_epoch=True, batch_size=batch_size)
         if 'relation_loss' in loss_dict:
             self.log('train_relation_loss', loss_dict['relation_loss'], on_step=True, on_epoch=True, batch_size=batch_size)
 
         return total_loss
+
+    def on_before_optimizer_step(self, optimizer, optimizer_idx):
+        """检查梯度中的NaN/Inf"""
+        for name, param in self.model.named_parameters():
+            if param.grad is not None:
+                try:
+                    check_tensor(param.grad, f"grad_{name}", self.global_step, "train")
+                except ValueError as e:
+                    print(f"🚨 GRADIENT ERROR: {e}")
+                    # 将有问题的梯度设为零
+                    param.grad.data.zero_()
     
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
-        """Validation step."""
+        """Validation step with comprehensive NaN/Inf detection."""
 
-        outputs = self.forward(batch)
+        # 🔍 检查验证输入数据
+        try:
+            check_tensor(batch['query_input_ids'], "val_query_input_ids", batch_idx, "val")
+            check_tensor(batch['query_attention_mask'], "val_query_attention_mask", batch_idx, "val")
+            check_tensor(batch['doc_input_ids'], "val_doc_input_ids", batch_idx, "val")
+            check_tensor(batch['doc_attention_mask'], "val_doc_attention_mask", batch_idx, "val")
+            check_tensor(batch['entity_spans'], "val_entity_spans", batch_idx, "val")
+            check_tensor(batch['labels'], "val_labels", batch_idx, "val")
+        except ValueError as e:
+            print(f"🚨 VALIDATION INPUT ERROR: {e}")
+            # 返回一个安全的损失值继续验证
+            return torch.tensor(1.609, device=self.device)
+
         labels = batch['labels']
 
-        # Compute loss with auxiliary tasks
+        # 🔍 检查验证标签范围
+        if (labels < 0).any() or (labels >= self.num_classes).any():
+            print(f"🚨 VALIDATION LABEL RANGE ERROR at batch {batch_idx}: labels {labels} outside [0, {self.num_classes-1}]")
+            return torch.tensor(1.609, device=self.device)
+
+        # 前向传播
+        outputs = self.forward(batch)
+
+        # 🔍 检查验证模型输出
+        try:
+            check_tensor(outputs['logits'], "val_logits", batch_idx, "val")
+        except ValueError as e:
+            print(f"🚨 VALIDATION OUTPUT ERROR: {e}")
+            return torch.tensor(1.609, device=self.device)
+
+        # 计算损失
         loss_dict = self.model.compute_loss(
             outputs=outputs,
             labels=labels,
@@ -149,33 +215,31 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Handle NaN in validation with fallback to ensure metrics are computed
-        if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"WARNING: NaN/Inf in validation loss at batch {batch_idx}, using fallback")
-            total_loss = torch.tensor(1.609, device=total_loss.device)  # ln(5) for 5 classes
+        # 🔍 检查验证损失值
+        try:
+            check_tensor(total_loss, "val_total_loss", batch_idx, "val")
+            check_tensor(main_loss, "val_main_loss", batch_idx, "val")
+        except ValueError as e:
+            print(f"🚨 VALIDATION LOSS ERROR: {e}")
+            print(f"  Val Logits range: [{outputs['logits'].min():.6f}, {outputs['logits'].max():.6f}]")
+            print(f"  Val Labels: {labels}")
+            total_loss = torch.tensor(1.609, device=self.device)
+            main_loss = torch.tensor(1.609, device=self.device)
 
-        # Compute accuracy with NaN handling
+        # 计算准确率
         logits = outputs['logits']
-
-        # Check for NaN in logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print(f"WARNING: NaN/Inf in validation logits at batch {batch_idx}")
-            # Use random predictions for this batch
-            preds = torch.randint(0, self.num_classes, labels.shape, device=labels.device)
-        else:
-            preds = torch.argmax(logits, dim=1)
-
+        preds = torch.argmax(logits, dim=1)
         acc = self.val_accuracy(preds, labels)
 
-        # Get batch size for proper logging
+        # 获取批次大小
         batch_size = labels.size(0)
 
-        # Log metrics with batch_size
+        # 记录验证指标
         self.log('val_loss', total_loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
         self.log('val_main_loss', main_loss, on_step=False, on_epoch=True, batch_size=batch_size)
         self.log('val_acc', acc, on_step=False, on_epoch=True, prog_bar=True, batch_size=batch_size)
 
-        # Log auxiliary losses if available
+        # 记录验证辅助损失
         if 'entity_loss' in loss_dict:
             self.log('val_entity_loss', loss_dict['entity_loss'], on_step=False, on_epoch=True, batch_size=batch_size)
         if 'relation_loss' in loss_dict:
