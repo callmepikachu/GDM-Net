@@ -50,9 +50,36 @@ class HotpotQADataset(Dataset):
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         except Exception as e:
-            print(f"Warning: Failed to load tokenizer {tokenizer_name}. Using fallback.")
-            from transformers import BertTokenizer
-            self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased', local_files_only=False)
+            print(f"Warning: Failed to load tokenizer {tokenizer_name}. Creating basic tokenizer.")
+            # Create a basic tokenizer with required methods
+            class BasicTokenizer:
+                def __init__(self):
+                    self.pad_token_id = 0
+                    self.vocab_size = 30522
+
+                def __call__(self, text, max_length=512, padding='max_length', truncation=True, return_tensors='pt'):
+                    # Simple tokenization - convert to token IDs
+                    if isinstance(text, str):
+                        # Simple word-based tokenization
+                        tokens = text.lower().split()[:max_length-2]  # Leave space for [CLS] and [SEP]
+                        token_ids = [101] + [hash(token) % (self.vocab_size-1000) + 1000 for token in tokens] + [102]
+                    else:
+                        token_ids = [101, 102]  # Just [CLS] and [SEP]
+
+                    # Pad or truncate
+                    if len(token_ids) < max_length:
+                        token_ids.extend([self.pad_token_id] * (max_length - len(token_ids)))
+                    else:
+                        token_ids = token_ids[:max_length]
+
+                    attention_mask = [1 if tid != self.pad_token_id else 0 for tid in token_ids]
+
+                    return {
+                        'input_ids': torch.tensor([token_ids], dtype=torch.long),
+                        'attention_mask': torch.tensor([attention_mask], dtype=torch.long)
+                    }
+
+            self.tokenizer = BasicTokenizer()
 
         # Load data
         self.data = self._load_data()

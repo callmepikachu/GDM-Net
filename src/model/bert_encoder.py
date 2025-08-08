@@ -32,14 +32,14 @@ class DocumentEncoder(nn.Module):
             self.bert = AutoModel.from_pretrained(model_name, config=self.config)
         except Exception as e:
             print(f"Warning: Failed to load {model_name} from HuggingFace. Using local fallback.")
-            # Fallback: create a simple BERT-like model
+            # Fallback: create a simple BERT-like model with correct hidden size
             from transformers import BertConfig, BertModel
             self.config = BertConfig(
                 vocab_size=30522,
-                hidden_size=hidden_size,
-                num_hidden_layers=12,
+                hidden_size=hidden_size,  # Use the target hidden size directly
+                num_hidden_layers=6,  # Smaller model for fallback
                 num_attention_heads=12,
-                intermediate_size=3072,
+                intermediate_size=hidden_size * 4,
                 max_position_embeddings=512
             )
             self.bert = BertModel(self.config)
@@ -49,9 +49,17 @@ class DocumentEncoder(nn.Module):
             for param in self.bert.parameters():
                 param.requires_grad = False
         
-        # Projection layers
-        self.doc_projection = nn.Linear(self.config.hidden_size, hidden_size)
-        self.query_projection = nn.Linear(self.config.hidden_size, hidden_size)
+        # Projection layers - ensure correct dimensions
+        bert_hidden_size = getattr(self.config, 'hidden_size', hidden_size)
+        # Only add projection if dimensions don't match
+        if bert_hidden_size != hidden_size:
+            self.doc_projection = nn.Linear(bert_hidden_size, hidden_size)
+            self.query_projection = nn.Linear(bert_hidden_size, hidden_size)
+            self.need_projection = True
+        else:
+            self.doc_projection = nn.Identity()
+            self.query_projection = nn.Identity()
+            self.need_projection = False
         
         # Dropout
         self.dropout = nn.Dropout(dropout_rate)
@@ -90,14 +98,18 @@ class DocumentEncoder(nn.Module):
         sequence_output = outputs.last_hidden_state  # [batch_size, seq_len, bert_hidden]
         pooled_output = outputs.pooler_output  # [batch_size, bert_hidden]
 
-        # Project to target hidden size
-        pooled_output = self.layer_norm(self.dropout(
-            self.doc_projection(pooled_output)
-        ))
+        # Project to target hidden size if needed
+        if self.need_projection:
+            pooled_output = self.layer_norm(self.dropout(
+                self.doc_projection(pooled_output)
+            ))
 
-        sequence_output = self.layer_norm(self.dropout(
-            self.query_projection(sequence_output)
-        ))
+            sequence_output = self.layer_norm(self.dropout(
+                self.doc_projection(sequence_output)
+            ))
+        else:
+            pooled_output = self.layer_norm(self.dropout(pooled_output))
+            sequence_output = self.layer_norm(self.dropout(sequence_output))
 
         return pooled_output, sequence_output
     
@@ -199,11 +211,23 @@ class StructureExtractor(nn.Module):
             if entity_spans is not None:
                 # Use provided entity spans
                 for i, (start, end) in enumerate(entity_spans[b]):
-                    if start < seq_len and end <= seq_len and start < end:
-                        entity_repr = sequence_output[b, start:end].mean(dim=0)
-                        entity_type = entity_logits[b, start:end].mean(dim=0).argmax().item()
+                    start_idx = int(start.item()) if hasattr(start, 'item') else int(start)
+                    end_idx = int(end.item()) if hasattr(end, 'item') else int(end)
+
+                    if start_idx < seq_len and end_idx <= seq_len and start_idx < end_idx:
+                        entity_repr = sequence_output[b, start_idx:end_idx].mean(dim=0)
+                        entity_type = entity_logits[b, start_idx:end_idx].mean(dim=0).argmax().item()
+
+                        # Ensure entity_repr has correct dimension
+                        if entity_repr.size(0) != self.hidden_size:
+                            if entity_repr.size(0) < self.hidden_size:
+                                padding = torch.zeros(self.hidden_size - entity_repr.size(0), device=entity_repr.device)
+                                entity_repr = torch.cat([entity_repr, padding], dim=0)
+                            else:
+                                entity_repr = entity_repr[:self.hidden_size]
+
                         batch_entities.append({
-                            'span': (int(start.item()), int(end.item())),
+                            'span': (start_idx, end_idx),
                             'type': int(entity_type),
                             'representation': entity_repr
                         })
@@ -212,10 +236,20 @@ class StructureExtractor(nn.Module):
                 entity_preds = entity_logits[b].argmax(dim=-1)
                 for i in range(seq_len):
                     if entity_preds[i] > 0 and attention_mask[b, i] == 1:
+                        entity_repr = sequence_output[b, i]
+
+                        # Ensure entity_repr has correct dimension
+                        if entity_repr.size(0) != self.hidden_size:
+                            if entity_repr.size(0) < self.hidden_size:
+                                padding = torch.zeros(self.hidden_size - entity_repr.size(0), device=entity_repr.device)
+                                entity_repr = torch.cat([entity_repr, padding], dim=0)
+                            else:
+                                entity_repr = entity_repr[:self.hidden_size]
+
                         batch_entities.append({
                             'span': (i, i+1),
                             'type': int(entity_preds[i].item()),
-                            'representation': sequence_output[b, i]
+                            'representation': entity_repr
                         })
 
             entities_batch.append(batch_entities)

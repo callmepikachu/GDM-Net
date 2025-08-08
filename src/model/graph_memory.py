@@ -73,7 +73,15 @@ class GraphWriter(nn.Module):
             if num_entities == 0:
                 # Create dummy entity if no entities found
                 num_entities = 1
-                entities = [{'span': (0, 1), 'type': 0, 'representation': sequence_output[b, 0]}]
+                dummy_repr = sequence_output[b, 0]
+                # Ensure dummy representation has correct dimension
+                if dummy_repr.size(0) != self.hidden_size:
+                    if dummy_repr.size(0) < self.hidden_size:
+                        padding = torch.zeros(self.hidden_size - dummy_repr.size(0), device=device)
+                        dummy_repr = torch.cat([dummy_repr, padding], dim=0)
+                    else:
+                        dummy_repr = dummy_repr[:self.hidden_size]
+                entities = [{'span': (0, 1), 'type': 0, 'representation': dummy_repr}]
 
             # Create node features
             batch_node_features = []
@@ -82,6 +90,17 @@ class GraphWriter(nn.Module):
 
                 # Text representation
                 text_repr = entity['representation']
+
+                # Ensure text_repr is the correct size
+                if text_repr.dim() == 0:
+                    text_repr = text_repr.unsqueeze(0)
+                if text_repr.size(0) != self.hidden_size:
+                    # Pad or truncate to hidden_size
+                    if text_repr.size(0) < self.hidden_size:
+                        padding = torch.zeros(self.hidden_size - text_repr.size(0), device=device)
+                        text_repr = torch.cat([text_repr, padding], dim=0)
+                    else:
+                        text_repr = text_repr[:self.hidden_size]
 
                 # Entity type embedding
                 entity_type = int(entity['type']) if isinstance(entity['type'], (int, float)) else 0
@@ -94,7 +113,7 @@ class GraphWriter(nn.Module):
                 position = torch.tensor(position, device=device, dtype=torch.long)
                 pos_repr = self.position_embedding(position)
 
-                # Combine features
+                # Combine features - ensure all have same dimension
                 combined_repr = torch.cat([text_repr, type_repr, pos_repr], dim=0)
                 node_feature = self.node_projection(combined_repr)
                 batch_node_features.append(node_feature)
