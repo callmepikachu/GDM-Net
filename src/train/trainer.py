@@ -93,15 +93,15 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Handle NaN/Inf in training - use fallback to continue training
+        # Minimal NaN handling - let real losses through
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"CRITICAL: NaN/Inf loss detected at batch {batch_idx}")
+            print(f"CRITICAL: NaN/Inf loss detected at batch {batch_idx} - this should be very rare now")
             print(f"  Main loss: {main_loss}")
             print(f"  Total loss: {total_loss}")
             print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
             print(f"  Labels: {labels}")
-            # Use fallback to continue training
-            total_loss = torch.tensor(1.0, device=total_loss.device, requires_grad=True)
+            # Skip this batch instead of using fallback
+            return None
 
         # Compute accuracy with NaN handling
         logits = outputs['logits']
@@ -149,10 +149,10 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Check for NaN values - use fallback for validation to continue training
+        # Minimal NaN handling for validation
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"CRITICAL: NaN/Inf in validation loss at batch {batch_idx}")
-            total_loss = torch.tensor(1.0, device=total_loss.device)  # Use fallback for validation
+            print(f"CRITICAL: NaN/Inf in validation loss at batch {batch_idx} - this should be very rare now")
+            return None  # Skip this validation batch
 
         # Compute accuracy with NaN handling
         logits = outputs['logits']

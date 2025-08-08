@@ -294,23 +294,13 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Numerically stable loss calculation
-        try:
-            # Use label smoothing for better stability
-            main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
+        # Direct loss calculation - let the model learn from real losses
+        main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
 
-            # Check if loss is valid and reasonable
-            if torch.isnan(main_loss) or torch.isinf(main_loss) or main_loss > 10.0:
-                print(f"WARNING: Invalid loss {main_loss}, using fallback")
-                # Use a more reasonable fallback based on random prediction
-                uniform_logits = torch.zeros_like(logits)
-                main_loss = F.cross_entropy(uniform_logits, labels)
-
-        except Exception as e:
-            print(f"ERROR in loss calculation: {e}")
-            # Fallback to uniform prediction loss
-            uniform_logits = torch.zeros_like(logits)
-            main_loss = F.cross_entropy(uniform_logits, labels)
+        # Only fallback if absolutely necessary (should be very rare now)
+        if torch.isnan(main_loss) or torch.isinf(main_loss):
+            print(f"CRITICAL: Invalid loss {main_loss}, using minimal fallback")
+            main_loss = F.cross_entropy(torch.zeros_like(logits), labels)
 
         # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):

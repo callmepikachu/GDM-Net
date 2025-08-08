@@ -26,7 +26,7 @@ data:
 training:
   max_epochs: 20  # 增加训练轮数
   batch_size: 8   # 保持小批次大小
-  learning_rate: 5e-5  # 降低学习率提高数值稳定性
+  learning_rate: 1e-4  # 适中的学习率，既稳定又能学习
   num_workers: 4  # 多进程数据加载
   accelerator: "gpu"
   devices: 1
