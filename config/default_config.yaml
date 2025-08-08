@@ -13,7 +13,6 @@ model:
   num_gnn_layers: 3  # 增加GNN层数以提升性能
   num_reasoning_hops: 4  # 增加推理跳数
   fusion_method: "gate"
-  learning_rate: 2e-5  # 标准BERT学习率
   dropout_rate: 0.1
 
 data:
@@ -26,6 +25,7 @@ data:
 training:
   max_epochs: 10
   batch_size: 16  # 大批次大小充分利用48GB显存
+  learning_rate: 2e-5  # 标准BERT学习率
   num_workers: 4  # 多进程数据加载
   accelerator: "gpu"
   devices: 1

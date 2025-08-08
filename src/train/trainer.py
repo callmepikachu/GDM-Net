@@ -147,41 +147,62 @@ class GDMNetTrainer(pl.LightningModule):
     
     def configure_optimizers(self):
         """Configure optimizers and schedulers."""
-        
+
         # Separate parameters for different learning rates
         bert_params = []
         other_params = []
-        
+
         for name, param in self.model.named_parameters():
             if 'bert' in name:
                 bert_params.append(param)
             else:
                 other_params.append(param)
-        
+
+        # Get learning rate from config (check both model and training sections)
+        learning_rate = self.config.get('model', {}).get('learning_rate',
+                                       self.config.get('training', {}).get('learning_rate', 2e-5))
+        learning_rate = float(learning_rate)
+
         # Optimizer with different learning rates
         optimizer = torch.optim.AdamW([
-            {'params': bert_params, 'lr': self.config['model']['learning_rate']},
-            {'params': other_params, 'lr': self.config['model']['learning_rate'] * 10}
+            {'params': bert_params, 'lr': learning_rate},
+            {'params': other_params, 'lr': learning_rate * 10}
         ], weight_decay=0.01)
-        
-        # Learning rate scheduler
-        total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(0.1 * total_steps)
-        
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=total_steps
-        )
-        
-        return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'interval': 'step',
-                'frequency': 1
+
+        # Learning rate scheduler with error handling
+        try:
+            total_steps = self.trainer.estimated_stepping_batches
+            # Ensure total_steps is an integer
+            if isinstance(total_steps, str):
+                total_steps = int(total_steps)
+            elif total_steps is None:
+                # Fallback calculation
+                max_epochs = self.config['training'].get('max_epochs', 10)
+                batch_size = self.config['training'].get('batch_size', 16)
+                # Estimate based on dataset size (assuming 5000 samples)
+                total_steps = int((5000 / batch_size) * max_epochs)
+
+            total_steps = int(total_steps)
+            warmup_steps = int(0.1 * total_steps)
+
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=warmup_steps,
+                num_training_steps=total_steps
+            )
+
+            return {
+                'optimizer': optimizer,
+                'lr_scheduler': {
+                    'scheduler': scheduler,
+                    'interval': 'step',
+                    'frequency': 1
+                }
             }
-        }
+
+        except Exception as e:
+            print(f"Warning: Failed to create scheduler: {e}. Using optimizer only.")
+            return optimizer
     
     def train_dataloader(self) -> DataLoader:
         """Create training dataloader."""
