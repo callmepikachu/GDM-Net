@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from typing import Dict, Any, Tuple, Optional
 
 from .bert_encoder import DocumentEncoder, StructureExtractor
@@ -203,14 +204,21 @@ class GDMNet(nn.Module):
         # Apply classifier
         logits = self.classifier(fused_representation)
 
-        # Ensure logits are finite and have reasonable range
-        logits = torch.clamp(logits, min=-5, max=5)
+        # More aggressive logits stabilization
+        # Remove extreme values that could cause softmax issues
+        logits = torch.clamp(logits, min=-3, max=3)
 
         # Check for NaN/Inf in logits
         if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print("WARNING: NaN/Inf detected in logits, reinitializing")
-            # Reinitialize logits with small random values
-            logits = torch.randn_like(logits) * 0.01
+            print("WARNING: NaN/Inf detected in logits, using small random values")
+            logits = torch.randn_like(logits) * 0.1
+
+        # Ensure logits have reasonable variance for softmax stability
+        logits_std = logits.std(dim=1, keepdim=True)
+        if (logits_std < 0.01).any():
+            # Add small noise to ensure variance
+            noise = torch.randn_like(logits) * 0.05
+            logits = logits + noise
 
         # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
@@ -294,13 +302,22 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Direct loss calculation - let the model learn from real losses
-        main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
+        # Use numerically stable loss calculation
+        # Manual implementation to avoid numerical issues
+        log_probs = F.log_softmax(logits, dim=1)
 
-        # Only fallback if absolutely necessary (should be very rare now)
+        # Check for NaN in log_probs
+        if torch.isnan(log_probs).any():
+            print("WARNING: NaN in log_probs, using uniform distribution")
+            log_probs = torch.full_like(log_probs, -math.log(logits.size(1)))
+
+        # Use NLL loss which is more stable
+        main_loss = F.nll_loss(log_probs, labels)
+
+        # Final check
         if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print(f"CRITICAL: Invalid loss {main_loss}, using minimal fallback")
-            main_loss = F.cross_entropy(torch.zeros_like(logits), labels)
+            print(f"CRITICAL: Still NaN after stable computation, using uniform loss")
+            main_loss = torch.tensor(math.log(logits.size(1)), device=logits.device, requires_grad=True)
 
         # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):
