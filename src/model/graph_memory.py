@@ -282,12 +282,33 @@ class GraphWriter(nn.Module):
             
             node_offset += num_nodes
         
-        # Concatenate all features (确保设备一致性)
+        # Concatenate all features (强制设备一致性)
         device = next(self.parameters()).device
-        node_features = torch.cat(all_node_features, dim=0) if all_node_features else torch.empty(0, self.node_dim, device=device)
-        edge_index = torch.cat(all_edge_indices, dim=1) if all_edge_indices else torch.empty(2, 0, dtype=torch.long, device=device)
-        edge_type = torch.cat(all_edge_types, dim=0) if all_edge_types else torch.empty(0, dtype=torch.long, device=device)
-        batch_indices = torch.cat(all_batch_indices, dim=0) if all_batch_indices else torch.empty(0, dtype=torch.long, device=device)
+
+        # 强制将所有张量移动到正确设备
+        if all_node_features:
+            all_node_features = [nf.to(device) for nf in all_node_features]
+            node_features = torch.cat(all_node_features, dim=0)
+        else:
+            node_features = torch.empty(0, self.node_dim, device=device)
+
+        if all_edge_indices:
+            all_edge_indices = [ei.to(device) for ei in all_edge_indices]
+            edge_index = torch.cat(all_edge_indices, dim=1)
+        else:
+            edge_index = torch.empty(2, 0, dtype=torch.long, device=device)
+
+        if all_edge_types:
+            all_edge_types = [et.to(device) for et in all_edge_types]
+            edge_type = torch.cat(all_edge_types, dim=0)
+        else:
+            edge_type = torch.empty(0, dtype=torch.long, device=device)
+
+        if all_batch_indices:
+            all_batch_indices = [bi.to(device) for bi in all_batch_indices]
+            batch_indices = torch.cat(all_batch_indices, dim=0)
+        else:
+            batch_indices = torch.empty(0, dtype=torch.long, device=device)
         
         return node_features, edge_index, edge_type, batch_indices
     
