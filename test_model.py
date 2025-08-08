@@ -35,6 +35,7 @@ def test_model_forward():
         print(f"    BERT config hidden_size: {doc_encoder.config.hidden_size}")
         print(f"    Target hidden_size: {doc_encoder.hidden_size}")
         print(f"    Need projection: {doc_encoder.need_projection}")
+        print(f"    BERT model type: {type(doc_encoder.bert).__name__}")
 
         # Test document encoding
         batch_size = 2

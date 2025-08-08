@@ -49,9 +49,15 @@ class HotpotQADataset(Dataset):
 
         # Initialize tokenizer with error handling - try local first
         local_model_path = "models"
+        local_tokenizer_files = [
+            os.path.join(local_model_path, "tokenizer.json"),
+            os.path.join(local_model_path, "vocab.txt"),
+            os.path.join(local_model_path, "tokenizer_config.json")
+        ]
 
         try:
-            if os.path.exists(local_model_path) and os.path.exists(os.path.join(local_model_path, "tokenizer.json")):
+            # Check if we have the necessary tokenizer files locally
+            if os.path.exists(local_model_path) and any(os.path.exists(f) for f in local_tokenizer_files):
                 print(f"Loading tokenizer from local path: {local_model_path}")
                 self.tokenizer = AutoTokenizer.from_pretrained(local_model_path, local_files_only=True)
             else:
@@ -59,7 +65,7 @@ class HotpotQADataset(Dataset):
                 self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
         except Exception as e:
-            print(f"Warning: Failed to load tokenizer from both local and HuggingFace. Creating basic tokenizer.")
+            print(f"Warning: Failed to load tokenizer. Creating basic tokenizer.")
             print(f"Error: {str(e)}")
             # Create a basic tokenizer with required methods
             class BasicTokenizer:
