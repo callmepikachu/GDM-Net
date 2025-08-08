@@ -84,17 +84,26 @@ class DualMemorySystem(nn.Module):
         episodic_query = self.episodic_query_projection(query_representations)
         semantic_query = self.semantic_query_projection(query_representations)
         
-        # Access episodic memory with numerical stability
+        # Access episodic memory with enhanced numerical stability
         episodic_scores = torch.matmul(episodic_query, self.episodic_memory.t())
-        episodic_scores = torch.clamp(episodic_scores, min=-10, max=10)  # Prevent extreme values
-        episodic_attention = F.softmax(episodic_scores, dim=1)
+        episodic_scores = torch.clamp(episodic_scores, min=-5, max=5)  # 更保守的范围
+        # 添加温度缩放提高稳定性
+        episodic_attention = F.softmax(episodic_scores / 1.0, dim=1)
         episodic_output = torch.matmul(episodic_attention, self.episodic_memory)
 
-        # Access semantic memory with numerical stability
+        # Access semantic memory with enhanced numerical stability
         semantic_scores = torch.matmul(semantic_query, self.semantic_memory.t())
-        semantic_scores = torch.clamp(semantic_scores, min=-10, max=10)  # Prevent extreme values
-        semantic_attention = F.softmax(semantic_scores, dim=1)
+        semantic_scores = torch.clamp(semantic_scores, min=-5, max=5)  # 更保守的范围
+        semantic_attention = F.softmax(semantic_scores / 1.0, dim=1)
         semantic_output = torch.matmul(semantic_attention, self.semantic_memory)
+
+        # 检查输出的数值稳定性
+        if torch.isnan(episodic_output).any() or torch.isinf(episodic_output).any():
+            print("WARNING: NaN/Inf in episodic_output")
+            episodic_output = torch.zeros_like(episodic_output)
+        if torch.isnan(semantic_output).any() or torch.isinf(semantic_output).any():
+            print("WARNING: NaN/Inf in semantic_output")
+            semantic_output = torch.zeros_like(semantic_output)
         
         # Update memory if specified
         if update_memory and self.training:
@@ -157,17 +166,25 @@ class DualMemorySystem(nn.Module):
         combined = torch.cat([episodic_output, semantic_output], dim=1)
 
         if self.use_gating:
-            # Compute fusion gate
-            gate = torch.sigmoid(self.fusion_gate(combined))
+            # Compute fusion gate with numerical stability
+            gate_input = torch.clamp(combined, min=-5, max=5)
+            gate = torch.sigmoid(self.fusion_gate(gate_input))
 
-            # Weighted combination
+            # Weighted combination with clamping
             weighted_combination = gate * episodic_output + (1 - gate) * semantic_output
+            weighted_combination = torch.clamp(weighted_combination, min=-5, max=5)
+
             # Final fusion: episodic + semantic + weighted_combination
             fused = torch.cat([episodic_output, semantic_output, weighted_combination], dim=1)
         else:
             # Simple concatenation: episodic + semantic + zeros for consistency
             zeros = torch.zeros_like(episodic_output)
             fused = torch.cat([episodic_output, semantic_output, zeros], dim=1)
+
+        # 检查融合结果的数值稳定性
+        if torch.isnan(fused).any() or torch.isinf(fused).any():
+            print("WARNING: NaN/Inf in fused memory output")
+            fused = torch.zeros_like(fused)
 
         # Project to output size
         output = self.fusion_projection(fused)

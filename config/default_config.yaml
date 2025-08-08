@@ -24,20 +24,20 @@ data:
   max_query_length: 64
 
 training:
-  max_epochs: 15  # 增加训练轮数
+  max_epochs: 20  # 增加训练轮数
   batch_size: 8   # 保持小批次大小
-  learning_rate: 3e-4  # 提高学习率帮助模型更快学习
+  learning_rate: 5e-5  # 降低学习率提高数值稳定性
   num_workers: 4  # 多进程数据加载
   accelerator: "gpu"
   devices: 1
   precision: 32
-  gradient_clip_val: 1.0  # 放松梯度裁剪
+  gradient_clip_val: 0.5  # 更严格的梯度裁剪
   accumulate_grad_batches: 2  # 梯度累积保持有效批次大小
   val_check_interval: 0.5
   log_every_n_steps: 50
   checkpoint_dir: "checkpoints"
   early_stopping: true
-  patience: 8  # 增加耐心值，给模型更多学习时间
+  patience: 10  # 增加耐心值
 
 logging:
   type: "tensorboard"

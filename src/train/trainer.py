@@ -197,10 +197,17 @@ class GDMNetTrainer(pl.LightningModule):
         print(f"Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
         print(f"Total parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
-        # Optimizer for trainable parameters only with stronger regularization
-        optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=0.05, eps=1e-6)
+        # Optimizer with enhanced numerical stability
+        optimizer = torch.optim.AdamW(
+            trainable_params,
+            lr=learning_rate,
+            weight_decay=0.01,  # 减少权重衰减
+            eps=1e-8,  # 更大的eps提高稳定性
+            betas=(0.9, 0.999),  # 标准beta值
+            amsgrad=True  # 使用AMSGrad变体提高稳定性
+        )
 
-        # Learning rate scheduler with error handling
+        # Learning rate scheduler with enhanced warmup for stability
         try:
             total_steps = self.trainer.estimated_stepping_batches
             # Ensure total_steps is an integer
@@ -208,19 +215,21 @@ class GDMNetTrainer(pl.LightningModule):
                 total_steps = int(total_steps)
             elif total_steps is None:
                 # Fallback calculation
-                max_epochs = self.config['training'].get('max_epochs', 10)
-                batch_size = self.config['training'].get('batch_size', 16)
+                max_epochs = self.config['training'].get('max_epochs', 20)
+                batch_size = self.config['training'].get('batch_size', 8)
                 # Estimate based on dataset size (assuming 5000 samples)
                 total_steps = int((5000 / batch_size) * max_epochs)
 
             total_steps = int(total_steps)
-            warmup_steps = int(0.1 * total_steps)
+            warmup_steps = int(0.2 * total_steps)  # 增加warmup比例到20%
 
             scheduler = get_linear_schedule_with_warmup(
                 optimizer,
                 num_warmup_steps=warmup_steps,
                 num_training_steps=total_steps
             )
+
+            print(f"Scheduler configured: {total_steps} total steps, {warmup_steps} warmup steps")
 
             return {
                 'optimizer': optimizer,

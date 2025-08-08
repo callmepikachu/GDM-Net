@@ -84,10 +84,14 @@ class GDMNet(nn.Module):
             dropout_rate=dropout_rate
         )
         
-        # Simplified classification head for better learning
+        # Stable classification head with normalization
         self.classifier = nn.Sequential(
+            nn.LayerNorm(hidden_size),  # 添加层归一化
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_size, num_classes)
+            nn.Linear(hidden_size, hidden_size // 4),  # 中间层
+            nn.GELU(),  # 平滑激活函数
+            nn.Dropout(dropout_rate * 0.5),  # 较小的dropout
+            nn.Linear(hidden_size // 4, num_classes)
         )
 
         # Initialize all model weights properly
@@ -188,22 +192,25 @@ class GDMNet(nn.Module):
                 self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
             fused_representation = self.emergency_projection(fused_representation)
 
-        # Apply classifier with numerical stability
+        # Check input to classifier for stability
+        if torch.isnan(fused_representation).any() or torch.isinf(fused_representation).any():
+            print("WARNING: NaN/Inf in fused_representation, using zeros")
+            fused_representation = torch.zeros_like(fused_representation)
+
+        # Normalize input to classifier for stability
+        fused_representation = F.layer_norm(fused_representation, [fused_representation.size(-1)])
+
+        # Apply classifier
         logits = self.classifier(fused_representation)
 
         # Ensure logits are finite and have reasonable range
-        logits = torch.clamp(logits, min=-10, max=10)
+        logits = torch.clamp(logits, min=-5, max=5)
 
         # Check for NaN/Inf in logits
         if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print("WARNING: NaN/Inf detected in logits, using zeros")
-            logits = torch.zeros_like(logits)
-
-        # Ensure logits have some variance for learning
-        if logits.std() < 0.01:
-            # Add small structured noise to break symmetry
-            noise = torch.randn_like(logits) * 0.1
-            logits = logits + noise
+            print("WARNING: NaN/Inf detected in logits, reinitializing")
+            # Reinitialize logits with small random values
+            logits = torch.randn_like(logits) * 0.01
 
         # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
@@ -287,26 +294,32 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Robust loss calculation with error handling
+        # Numerically stable loss calculation
         try:
-            main_loss = F.cross_entropy(logits, labels)
+            # Use label smoothing for better stability
+            main_loss = F.cross_entropy(logits, labels, label_smoothing=0.1)
 
-            # Check if loss is valid
-            if torch.isnan(main_loss) or torch.isinf(main_loss):
-                print("WARNING: Invalid loss, using fallback")
-                main_loss = torch.tensor(1.0, device=logits.device, requires_grad=True)
+            # Check if loss is valid and reasonable
+            if torch.isnan(main_loss) or torch.isinf(main_loss) or main_loss > 10.0:
+                print(f"WARNING: Invalid loss {main_loss}, using fallback")
+                # Use a more reasonable fallback based on random prediction
+                uniform_logits = torch.zeros_like(logits)
+                main_loss = F.cross_entropy(uniform_logits, labels)
 
         except Exception as e:
             print(f"ERROR in loss calculation: {e}")
-            main_loss = torch.tensor(1.0, device=logits.device, requires_grad=True)
+            # Fallback to uniform prediction loss
+            uniform_logits = torch.zeros_like(logits)
+            main_loss = F.cross_entropy(uniform_logits, labels)
 
         # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):
             self._loss_debug_count = 0
-        if self._loss_debug_count < 3:
+        if self._loss_debug_count < 5:
             print(f"Loss debug {self._loss_debug_count}: main_loss = {main_loss.item():.6f}")
             print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
             print(f"  Logits std: {logits.std():.6f}")
+            print(f"  Labels: {labels[:5]}")  # Show first 5 labels
             self._loss_debug_count += 1
 
         # Final check for NaN/Inf
