@@ -84,20 +84,27 @@ class GDMNet(nn.Module):
             dropout_rate=dropout_rate
         )
         
-        # Classification head for main task
+        # Simplified classification head for better learning
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
             nn.Dropout(dropout_rate),
-            nn.Linear(hidden_size // 2, num_classes)
+            nn.Linear(hidden_size, num_classes)
         )
 
-        # Initialize classifier weights for numerical stability
-        for module in self.classifier.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.1)  # Small gain for stability
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
+        # Initialize all model weights properly
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """Initialize weights for all modules."""
+        if isinstance(module, nn.Linear):
+            # Use normal initialization with proper scaling
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.0)
+        elif isinstance(module, nn.LayerNorm):
+            nn.init.constant_(module.bias, 0.0)
+            nn.init.constant_(module.weight, 1.0)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
         # Loss functions
         self.main_loss_fn = nn.CrossEntropyLoss()
@@ -181,22 +188,23 @@ class GDMNet(nn.Module):
                 self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
             fused_representation = self.emergency_projection(fused_representation)
 
-        # Check classifier weights for NaN/Inf
-        for name, param in self.classifier.named_parameters():
-            if torch.isnan(param).any() or torch.isinf(param).any():
-                print(f"WARNING: NaN/Inf in classifier {name}!")
-                param.data = torch.where(torch.isnan(param) | torch.isinf(param),
-                                       torch.zeros_like(param), param)
-
+        # Apply classifier with proper scaling
         logits = self.classifier(fused_representation)
-        # Remove debug output - no longer needed
 
-        # Check logits immediately after classifier
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print(f"WARNING: NaN/Inf in logits immediately after classifier!")
-            print(f"  fused_representation stats: min={fused_representation.min()}, max={fused_representation.max()}, mean={fused_representation.mean()}")
-            print(f"  fused_representation has NaN: {torch.isnan(fused_representation).any()}")
-            print(f"  fused_representation has Inf: {torch.isinf(fused_representation).any()}")
+        # Force logits to have reasonable range for learning
+        if logits.abs().max() < 0.1:
+            # If logits are too small, the model isn't learning properly
+            # Add a learnable scaling factor
+            if not hasattr(self, 'logits_scale'):
+                self.logits_scale = nn.Parameter(torch.tensor(5.0))
+            logits = logits * self.logits_scale
+
+        # Ensure logits have proper variance
+        logits_std = logits.std()
+        if logits_std < 0.1:
+            # Add small random noise to break symmetry
+            noise = torch.randn_like(logits) * 0.1
+            logits = logits + noise
 
         # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
@@ -280,38 +288,17 @@ class GDMNet(nn.Module):
             # Clamp labels to valid range
             labels = torch.clamp(labels, 0, self.num_classes - 1)
 
-        # Apply numerical stability to logits
-        logits = torch.clamp(logits, min=-10, max=10)
-
-        # Check for any remaining NaN/Inf in logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print(f"WARNING: NaN/Inf in logits after clamping!")
-            print(f"  NaN count: {torch.isnan(logits).sum()}")
-            print(f"  Inf count: {torch.isinf(logits).sum()}")
-            logits = torch.where(torch.isnan(logits) | torch.isinf(logits),
-                               torch.zeros_like(logits), logits)
-
-        # Additional stability check - ensure logits are reasonable
-        if logits.abs().max() > 50:
-            print(f"WARNING: Extremely large logits detected: max={logits.abs().max()}")
-            logits = torch.clamp(logits, min=-5, max=5)
-
-        # Use standard cross entropy - should be stable now with proper initialization
+        # Simple and robust loss calculation
         main_loss = F.cross_entropy(logits, labels)
 
-        # Debug: Check if we're still getting fallback values
+        # Debug first few losses
         if not hasattr(self, '_loss_debug_count'):
             self._loss_debug_count = 0
-        if self._loss_debug_count < 5:
+        if self._loss_debug_count < 3:
             print(f"Loss debug {self._loss_debug_count}: main_loss = {main_loss.item():.6f}")
-            self._loss_debug_count += 1
-
-        # Only use fallback if loss is actually NaN/Inf
-        if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print(f"WARNING: NaN/Inf detected in main loss. Using fallback.")
             print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
-            print(f"  Labels: {labels}")
-            main_loss = torch.tensor(0.1, device=main_loss.device, requires_grad=True)
+            print(f"  Logits std: {logits.std():.6f}")
+            self._loss_debug_count += 1
 
         # Final check for NaN/Inf
         if torch.isnan(main_loss) or torch.isinf(main_loss):

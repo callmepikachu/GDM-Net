@@ -93,15 +93,16 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Only log if there are actual NaN values (should be rare now)
+        # Remove fallback mechanism - let the model learn from real losses
+        # Only log if there are actual NaN values (should not happen now)
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"WARNING: NaN/Inf loss detected at batch {batch_idx}")
+            print(f"CRITICAL: NaN/Inf loss detected at batch {batch_idx}")
             print(f"  Main loss: {main_loss}")
             print(f"  Total loss: {total_loss}")
             print(f"  Logits stats: min={outputs['logits'].min()}, max={outputs['logits'].max()}, mean={outputs['logits'].mean()}")
             print(f"  Labels: {labels}")
-            # This should rarely happen now
-            total_loss = torch.tensor(0.1, device=total_loss.device, requires_grad=True)
+            # Skip this batch instead of using fallback
+            return None
 
         # Compute accuracy
         logits = outputs['logits']
@@ -144,9 +145,10 @@ class GDMNetTrainer(pl.LightningModule):
         total_loss = loss_dict['total_loss']
         main_loss = loss_dict['main_loss']
 
-        # Check for NaN values
+        # Check for NaN values - should not happen now
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            total_loss = torch.tensor(0.1, device=total_loss.device)
+            print(f"CRITICAL: NaN/Inf in validation loss at batch {batch_idx}")
+            return None
 
         # Compute accuracy
         logits = outputs['logits']
@@ -183,8 +185,8 @@ class GDMNetTrainer(pl.LightningModule):
         print(f"Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
         print(f"Total parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
-        # Optimizer for trainable parameters only
-        optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=0.01)
+        # Optimizer for trainable parameters only with stronger regularization
+        optimizer = torch.optim.AdamW(trainable_params, lr=learning_rate, weight_decay=0.05, eps=1e-6)
 
         # Learning rate scheduler with error handling
         try:
