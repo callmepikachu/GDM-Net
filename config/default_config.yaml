@@ -25,16 +25,16 @@ data:
 
 training:
   max_epochs: 30  # 进一步增加训练轮数
-  batch_size: 64  # 大幅增加批次大小充分利用显存
+  batch_size: 16  # 减小batch size缓解CPU瓶颈
   learning_rate: 2e-4  # 增加学习率适应更大batch size
-  num_workers: 4  # 多进程数据加载
+  num_workers: 12  # 进一步增加数据加载进程
   accelerator: "gpu"
   devices: 1
   precision: 32
   gradient_clip_val: 0.5  # 更严格的梯度裁剪
   accumulate_grad_batches: 1  # 减少梯度累积，因为batch size已增加
   val_check_interval: 0.5
-  log_every_n_steps: 20  # 减少日志频率适应更快训练
+  log_every_n_steps: 10  # 进一步减少日志频率
   checkpoint_dir: "checkpoints"
   early_stopping: true
   patience: 15  # 增加耐心值适应更长训练

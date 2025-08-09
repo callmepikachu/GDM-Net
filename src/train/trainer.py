@@ -329,7 +329,9 @@ class GDMNetTrainer(pl.LightningModule):
             shuffle=True,
             num_workers=self.config['training']['num_workers'],
             collate_fn=self.data_collator,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True,  # 保持worker进程
+            prefetch_factor=2         # 预取数据
         )
     
     def val_dataloader(self) -> DataLoader:
@@ -349,7 +351,9 @@ class GDMNetTrainer(pl.LightningModule):
             shuffle=False,
             num_workers=self.config['training']['num_workers'],
             collate_fn=self.data_collator,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True,  # 保持worker进程
+            prefetch_factor=2         # 预取数据
         )
 
     def test_dataloader(self) -> DataLoader:

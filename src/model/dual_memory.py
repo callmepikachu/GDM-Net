@@ -10,8 +10,8 @@ class DualMemorySystem(nn.Module):
     def __init__(
         self,
         hidden_size: int = 768,
-        memory_size: int = 512,
-        num_memory_slots: int = 64,
+        memory_size: int = 256,  # 减少记忆大小缓解CPU负担
+        num_memory_slots: int = 32,  # 减少记忆槽数量
         dropout_rate: float = 0.1,
         use_gating: bool = True
     ):
