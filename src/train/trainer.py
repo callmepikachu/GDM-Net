@@ -82,7 +82,9 @@ class GDMNetTrainer(pl.LightningModule):
             doc_attention_mask=batch['doc_attention_mask'],
             entity_spans=batch['entity_spans'],
             entity_labels=batch.get('entity_labels'),
-            relation_labels=batch.get('relation_labels')
+            relation_labels=batch.get('relation_labels'),
+            # 🚀 传递原始文本给SpaCy处理
+            doc_texts=batch.get('doc_text', None)
         )
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:

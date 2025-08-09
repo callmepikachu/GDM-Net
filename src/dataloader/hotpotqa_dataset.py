@@ -390,6 +390,26 @@ class HotpotQADataset(Dataset):
                 relation_type_id = self.relation_type_map.get(relation_type_str, 0)
                 relation_labels[i] = relation_type_id
 
+        # 🚀 提取原始文本用于SpaCy处理
+        query_text = sample.get('question', '')
+
+        # 重构文档文本（与预处理时相同的逻辑）
+        context = sample.get('context', [])
+        if isinstance(context, list) and len(context) > 0:
+            document_parts = []
+            for ctx_item in context:
+                if isinstance(ctx_item, list) and len(ctx_item) >= 2:
+                    title = ctx_item[0]
+                    sentences = ctx_item[1]
+                    if isinstance(sentences, list):
+                        doc_text = f"{title}. " + " ".join(sentences)
+                    else:
+                        doc_text = f"{title}. {sentences}"
+                    document_parts.append(doc_text)
+            doc_text = " ".join(document_parts)
+        else:
+            doc_text = sample.get('document', '')
+
         # 🚀 使用预计算的tokenization结果创建返回字典
         result = {
             'query_input_ids': query_input_ids,
@@ -400,7 +420,10 @@ class HotpotQADataset(Dataset):
             'entity_labels': entity_labels,
             'relation_labels': relation_labels,
             'label': torch.tensor(label, dtype=torch.long),
-            'metadata': sample.get('metadata', {})
+            'metadata': sample.get('metadata', {}),
+            # 🚀 添加原始文本用于SpaCy处理
+            'query_text': query_text,
+            'doc_text': doc_text
         }
 
         # Check for NaN/Inf in the data before returning

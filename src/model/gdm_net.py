@@ -215,9 +215,12 @@ class GDMNet(nn.Module):
             query_input_ids, query_attention_mask
         ) if query_input_ids is not None else (doc_pooled, doc_sequence)
 
-        # Step 3: Structure extraction (explicit path)
+        # Step 3: Structure extraction (explicit path) - 使用SpaCy + 适配器
+        # 提取原始文本用于SpaCy处理
+        doc_texts = kwargs.get('doc_texts', None)
+
         entity_logits, relation_logits, entities_batch, relations_batch = self.structure_extractor(
-            doc_sequence, doc_attention_mask, entity_spans
+            doc_sequence, doc_attention_mask, entity_spans, input_texts=doc_texts
         )
 
         # 🔍 调试信息：检查实体关系提取质量
