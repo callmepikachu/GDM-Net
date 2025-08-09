@@ -251,32 +251,12 @@ class GDMNet(nn.Module):
                 self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
             fused_representation = self.emergency_projection(fused_representation)
 
-        # Check input to classifier for stability
-        if torch.isnan(fused_representation).any() or torch.isinf(fused_representation).any():
-            print("WARNING: NaN/Inf in fused_representation, using zeros")
-            fused_representation = torch.zeros_like(fused_representation)
-
-        # Normalize input to classifier for stability
+        # 🔥 极简的分类器应用
+        # 标准化输入
         fused_representation = F.layer_norm(fused_representation, [fused_representation.size(-1)])
 
-        # Apply classifier
+        # 直接应用分类器
         logits = self.classifier(fused_representation)
-
-        # More aggressive logits stabilization
-        # Remove extreme values that could cause softmax issues
-        logits = torch.clamp(logits, min=-3, max=3)
-
-        # Check for NaN/Inf in logits
-        if torch.isnan(logits).any() or torch.isinf(logits).any():
-            print("WARNING: NaN/Inf detected in logits, using small random values")
-            logits = torch.randn_like(logits) * 0.1
-
-        # Ensure logits have reasonable variance for softmax stability
-        logits_std = logits.std(dim=1, keepdim=True)
-        if (logits_std < 0.01).any():
-            # Add small noise to ensure variance
-            noise = torch.randn_like(logits) * 0.05
-            logits = logits + noise
 
         # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
@@ -318,6 +298,53 @@ class GDMNet(nn.Module):
         }
 
         return outputs
+
+    def _stable_cross_entropy(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        手动实现的数值稳定cross entropy损失
+
+        Args:
+            logits: [batch_size, num_classes] 原始logits
+            labels: [batch_size] 标签索引
+
+        Returns:
+            scalar loss tensor
+        """
+        # 1. 基本检查
+        batch_size, num_classes = logits.shape
+
+        # 2. 数值稳定的softmax计算
+        # 减去最大值防止exp溢出
+        max_logits = torch.max(logits, dim=1, keepdim=True)[0]
+        shifted_logits = logits - max_logits
+
+        # 计算exp，添加小的epsilon防止log(0)
+        exp_logits = torch.exp(shifted_logits)
+        sum_exp = torch.sum(exp_logits, dim=1, keepdim=True)
+
+        # 计算log概率
+        log_probs = shifted_logits - torch.log(sum_exp + 1e-8)
+
+        # 3. 手动实现negative log likelihood
+        # 创建one-hot编码
+        labels_one_hot = torch.zeros_like(logits)
+        labels_one_hot.scatter_(1, labels.unsqueeze(1), 1.0)
+
+        # 计算负对数似然
+        nll = -torch.sum(labels_one_hot * log_probs, dim=1)
+
+        # 4. 返回平均损失
+        loss = torch.mean(nll)
+
+        # 5. 最终安全检查
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"🚨 CRITICAL: Even stable cross entropy failed!")
+            print(f"  Logits stats: min={logits.min():.6f}, max={logits.max():.6f}, std={logits.std():.6f}")
+            print(f"  Labels: {labels}")
+            # 返回一个合理的常数损失
+            return torch.tensor(1.609, device=logits.device, requires_grad=True)  # ln(5)
+
+        return loss
     
     def compute_loss(
         self,
@@ -339,93 +366,28 @@ class GDMNet(nn.Module):
             Dictionary containing different loss components
         """
 
-        # Main classification loss with numerical stability
+        # 🔥 完全重写的数值稳定损失计算
         logits = outputs['logits']
 
-        # Dimensions should be correct now - remove debug output
+        # 手动实现最稳定的cross entropy
+        main_loss = self._stable_cross_entropy(logits, labels)
 
-        # Check logits dimensions
-        if logits.size(1) != self.num_classes:
-            print(f"ERROR: Logits dimension mismatch! Expected {self.num_classes}, got {logits.size(1)}")
-            # Fix logits dimension if needed
-            if logits.size(1) < self.num_classes:
-                padding = torch.zeros(logits.size(0), self.num_classes - logits.size(1), device=logits.device)
-                logits = torch.cat([logits, padding], dim=1)
-            else:
-                logits = logits[:, :self.num_classes]
-
-        # Check label range
-        if labels.max() >= self.num_classes or labels.min() < 0:
-            print(f"WARNING: Labels out of range! Labels: {labels}, num_classes: {self.num_classes}")
-            # Clamp labels to valid range
-            labels = torch.clamp(labels, 0, self.num_classes - 1)
-
-        # Extremely simple and stable loss calculation
-        # Ensure logits are in a very safe range
-        logits = torch.clamp(logits, min=-2, max=2)
-
-        # Use the most basic cross entropy without any modifications
-        main_loss = F.cross_entropy(logits, labels, reduction='mean')
-
-        # If still NaN, use a constant loss
-        if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print(f"CRITICAL: NaN in basic cross_entropy. Logits range: [{logits.min():.6f}, {logits.max():.6f}]")
-            print(f"Labels: {labels}")
-            main_loss = torch.tensor(1.609, device=logits.device, requires_grad=True)  # ln(5) for 5 classes
-
-        # Debug first few losses
+        # 简单调试（只在前3次）
         if not hasattr(self, '_loss_debug_count'):
             self._loss_debug_count = 0
-        if self._loss_debug_count < 5:
-            print(f"Loss debug {self._loss_debug_count}: main_loss = {main_loss.item():.6f}")
-            print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
-            print(f"  Logits std: {logits.std():.6f}")
-            print(f"  Labels: {labels[:5]}")  # Show first 5 labels
+        if self._loss_debug_count < 3:
+            print(f"✅ Stable loss {self._loss_debug_count}: {main_loss.item():.6f}")
             self._loss_debug_count += 1
 
-        # Final check for NaN/Inf
-        if torch.isnan(main_loss) or torch.isinf(main_loss):
-            print(f"WARNING: NaN/Inf detected in main loss. Using fallback.")
-            print(f"  Logits shape: {logits.shape}")
-            print(f"  Logits range: [{logits.min():.3f}, {logits.max():.3f}]")
-            print(f"  Labels: {labels}")
-            print(f"  Labels range: [{labels.min()}, {labels.max()}]")
-            main_loss = torch.tensor(0.1, device=main_loss.device, requires_grad=True)
-
+        # 🎯 专注于主任务，暂时禁用辅助损失
         total_loss = main_loss
-        loss_dict = {'main_loss': main_loss}
+        loss_dict = {
+            'main_loss': main_loss,
+            'total_loss': total_loss
+        }
 
-        # Entity extraction auxiliary loss
-        if entity_labels is not None and 'entity_logits' in outputs:
-            entity_logits = outputs['entity_logits']
-            batch_size, seq_len, num_classes = entity_logits.shape
-
-            # Flatten for loss computation
-            entity_logits_flat = entity_logits.view(-1, num_classes)
-            entity_labels_flat = entity_labels.view(-1)
-
-            entity_loss = self.entity_loss_fn(entity_logits_flat, entity_labels_flat)
-            total_loss += self.entity_loss_weight * entity_loss
-            loss_dict['entity_loss'] = entity_loss
-
-        # Relation extraction auxiliary loss
-        if relation_labels is not None and 'relation_logits' in outputs:
-            relation_logits = outputs['relation_logits']
-            if relation_logits.numel() > 0 and relation_labels.numel() > 0:
-                # Ensure shapes match
-                min_size = min(relation_logits.size(1), relation_labels.size(1))
-                if min_size > 0:
-                    relation_logits_subset = relation_logits[:, :min_size]
-                    relation_labels_subset = relation_labels[:, :min_size]
-
-                    relation_logits_flat = relation_logits_subset.view(-1, relation_logits.size(-1))
-                    relation_labels_flat = relation_labels_subset.view(-1)
-
-                    relation_loss = self.relation_loss_fn(relation_logits_flat, relation_labels_flat)
-                    total_loss += self.relation_loss_weight * relation_loss
-                    loss_dict['relation_loss'] = relation_loss
-
-        loss_dict['total_loss'] = total_loss
+        # 辅助损失暂时禁用，等主损失稳定后再启用
+        # TODO: 在主损失完全稳定后重新启用entity和relation损失
 
         return loss_dict
     
