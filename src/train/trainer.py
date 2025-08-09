@@ -149,7 +149,7 @@ class GDMNetTrainer(pl.LightningModule):
         # 获取批次大小
         batch_size = labels.size(0)
 
-        # 🔍 调试信息：检查标签分布
+        # 🔍 调试信息：检查标签分布和图记忆状态
         if batch_idx % 500 == 0:
             # 只对bincount操作临时关闭确定性检查
             with torch.backends.cudnn.flags(enabled=False):
@@ -162,6 +162,11 @@ class GDMNetTrainer(pl.LightningModule):
                     label_dist = label_counts.float() / label_counts.sum()
                     print(f"🔍 Batch {batch_idx} label distribution: {label_dist.tolist()}")
                     print(f"🔍 Label counts: {label_counts.tolist()}")
+
+                    # 🚀 显示图记忆统计信息 (新增)
+                    graph_stats = self.model.get_graph_memory_stats()
+                    print(f"🔍 Graph Memory: {graph_stats['num_nodes']} nodes, {graph_stats['num_edges']} edges")
+
                 finally:
                     # 恢复原始设置
                     torch.use_deterministic_algorithms(original_deterministic)
@@ -178,6 +183,24 @@ class GDMNetTrainer(pl.LightningModule):
             self.log('train_relation_loss', loss_dict['relation_loss'], on_step=True, on_epoch=True, batch_size=batch_size)
 
         return total_loss
+
+    def on_train_epoch_end(self):
+        """训练epoch结束时的处理"""
+        super().on_train_epoch_end()
+
+        # 🚀 清空批处理队列 (新增)
+        final_stats = self.model.flush_graph_memory_batch()
+
+        # 🚀 保存图记忆状态 (新增)
+        if self.current_epoch % 5 == 0:  # 每5个epoch保存一次
+            save_path = f"checkpoints/graph_memory_epoch_{self.current_epoch}.pkl"
+            import os
+            os.makedirs("checkpoints", exist_ok=True)
+            self.model.save_graph_memory(save_path)
+
+            # 保存关系类型词汇表
+            from .model.relation_type_manager import save_global_relation_vocab
+            save_global_relation_vocab()
 
     def on_before_optimizer_step(self, optimizer, optimizer_idx):
         """检查梯度中的NaN/Inf"""

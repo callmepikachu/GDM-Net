@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import List, Tuple, Optional, Dict
 from collections import deque
+from .graph_sampler import AdaptiveGraphSampler
 
 
 class PathFinder(nn.Module):
@@ -20,6 +21,12 @@ class PathFinder(nn.Module):
         self.hidden_size = hidden_size
         self.max_hops = min(max_hops, 2)  # 还原到2跳
         self.max_paths = min(max_paths, 4)  # 还原到4条路径
+
+        # 🚀 图采样器用于大图优化
+        self.graph_sampler = AdaptiveGraphSampler(
+            max_nodes=200,
+            max_edges=400
+        )
 
         # Query-node similarity computation
         self.query_projection = nn.Linear(hidden_size, hidden_size)
@@ -58,15 +65,39 @@ class PathFinder(nn.Module):
         batch_size = query.size(0)
         device = query.device
 
+        # 🚀 图采样优化（对于大图）
+        if node_features.size(0) > 200:
+            # 使用自适应采样减少计算复杂度
+            sampled_node_features, sampled_edge_index, _, sampled_node_mapping = \
+                self.graph_sampler.adaptive_sampling(
+                    node_features, edge_index, torch.zeros(edge_index.size(1), dtype=torch.long, device=device)
+                )
+
+            # 更新batch_indices以匹配采样后的节点
+            sampled_batch_indices = torch.zeros(sampled_node_features.size(0), dtype=torch.long, device=device)
+            for new_idx, old_idx in enumerate(sampled_node_mapping):
+                if old_idx < batch_indices.size(0):
+                    sampled_batch_indices[new_idx] = batch_indices[old_idx]
+
+            # 使用采样后的图进行推理
+            working_node_features = sampled_node_features
+            working_edge_index = sampled_edge_index
+            working_batch_indices = sampled_batch_indices
+        else:
+            # 图足够小，直接使用原图
+            working_node_features = node_features
+            working_edge_index = edge_index
+            working_batch_indices = batch_indices
+
         # Project query and nodes for similarity computation
         query_proj = self.query_projection(query)  # [batch_size, hidden_size]
-        node_proj = self.node_projection(node_features)  # [total_nodes, hidden_size]
+        node_proj = self.node_projection(working_node_features)  # [sampled_nodes, hidden_size]
 
         path_representations = []
 
         for b in range(batch_size):
-            # Get nodes for this batch
-            batch_mask = batch_indices == b
+            # Get nodes for this batch (使用采样后的batch_indices)
+            batch_mask = working_batch_indices == b
             batch_nodes = node_proj[batch_mask]  # [num_nodes_b, hidden_size]
             batch_node_indices = torch.where(batch_mask)[0]
 

@@ -8,6 +8,9 @@ from .bert_encoder import DocumentEncoder, StructureExtractor
 from .graph_memory import GraphWriter, GraphMemory
 from .dual_memory import DualMemorySystem
 from .reasoning_module import ReasoningModule
+from .persistent_graph_memory import PersistentGraphMemory
+from .entity_aligner import EntityAligner
+from .batch_graph_updater import BatchGraphUpdater
 
 
 class GDMNet(nn.Module):
@@ -83,6 +86,20 @@ class GDMNet(nn.Module):
             max_hops=num_reasoning_hops,
             fusion_method=fusion_method,
             dropout_rate=dropout_rate
+        )
+
+        # 🚀 持久化图记忆系统 (新增)
+        self.persistent_graph_memory = PersistentGraphMemory(
+            node_dim=hidden_size,
+            device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        )
+
+        # 🚀 实体对齐器 (新增)
+        self.entity_aligner = EntityAligner(similarity_threshold=0.85)
+
+        # 🚀 批处理图更新器 (新增)
+        self.batch_graph_updater = BatchGraphUpdater(
+            self.persistent_graph_memory, self.entity_aligner
         )
         
         # Stable classification head with normalization
@@ -243,9 +260,56 @@ class GDMNet(nn.Module):
             node_features, edge_index, edge_type, batch_indices
         )
 
-        # Step 6: Multi-hop reasoning (先进行推理获取图和路径表示)
+        # 🚀 Step 5.5: 持久化图记忆更新和查询 (新增)
+        if self.training:
+            # 🚀 训练时：使用批处理更新器更新全局图记忆
+            for i, (entities, relations) in enumerate(zip(entities_batch, relations_batch)):
+                if i < updated_node_features.size(0):
+                    # 计算每个样本的节点数量
+                    num_entities = len(entities) if entities else 0
+                    if num_entities > 0:
+                        # 提取对应的节点特征
+                        start_idx = sum(len(entities_batch[j]) for j in range(i))
+                        end_idx = start_idx + num_entities
+                        sample_node_features = updated_node_features[start_idx:end_idx]
+
+                        # 添加到批处理更新器
+                        self.batch_graph_updater.add_batch_sample(
+                            entities, relations, sample_node_features
+                        )
+
+            # 每隔一定步数或batch结束时批量更新
+            if self.batch_graph_updater.get_batch_size() >= 4:  # 累积4个样本后批量更新
+                update_stats = self.batch_graph_updater.flush_batch()
+                if hasattr(self, '_debug_step') and self._debug_step % 1000 == 0:
+                    print(f"🔄 Graph update: +{update_stats['nodes_added']} nodes, +{update_stats['edges_added']} edges")
+
+        # 查询相关的全局图子图用于推理增强
+        query_embedding = query_pooled[0].cpu().detach().numpy()  # 使用第一个查询
+        global_node_features, global_edge_index, global_edge_type, global_node_ids = \
+            self.persistent_graph_memory.get_subgraph_for_query(query_embedding, top_k=20)
+
+        # 将全局图信息与局部图信息结合 (简单拼接)
+        if global_node_features.size(0) > 0:
+            # 拼接局部和全局节点特征
+            combined_node_features = torch.cat([updated_node_features, global_node_features], dim=0)
+
+            # 调整全局边索引以适应拼接后的节点索引
+            if global_edge_index.size(1) > 0:
+                global_edge_index_adjusted = global_edge_index + updated_node_features.size(0)
+                combined_edge_index = torch.cat([edge_index, global_edge_index_adjusted], dim=1)
+                combined_edge_type = torch.cat([edge_type, global_edge_type], dim=0)
+            else:
+                combined_edge_index = edge_index
+                combined_edge_type = edge_type
+        else:
+            combined_node_features = updated_node_features
+            combined_edge_index = edge_index
+            combined_edge_type = edge_type
+
+        # Step 6: Multi-hop reasoning (使用组合的局部+全局图特征)
         fused_representation, path_representation, graph_representation = self.reasoning_module(
-            query_pooled, doc_pooled, updated_node_features, edge_index, edge_type, batch_indices
+            query_pooled, doc_pooled, combined_node_features, combined_edge_index, combined_edge_type, batch_indices
         )
 
         # Step 7: NEW - Dual Memory Processing (使用推理结果)
@@ -315,6 +379,34 @@ class GDMNet(nn.Module):
         }
 
         return outputs
+
+    # 🚀 持久化图记忆管理方法 (新增)
+    def save_graph_memory(self, filepath: str):
+        """保存持久化图记忆到磁盘"""
+        self.persistent_graph_memory.save_to_disk(filepath)
+        print(f"✅ Graph memory saved to {filepath}")
+
+    def load_graph_memory(self, filepath: str):
+        """从磁盘加载持久化图记忆"""
+        self.persistent_graph_memory.load_from_disk(filepath)
+        print(f"✅ Graph memory loaded from {filepath}")
+
+    def get_graph_memory_stats(self) -> dict:
+        """获取图记忆统计信息"""
+        return {
+            'num_nodes': len(self.persistent_graph_memory.nodes),
+            'num_edges': len(self.persistent_graph_memory.edges),
+            'num_entity_types': len(self.persistent_graph_memory.entity_type_index),
+            'batch_queue_size': self.batch_graph_updater.get_batch_size()
+        }
+
+    def flush_graph_memory_batch(self):
+        """强制清空批处理队列"""
+        if self.batch_graph_updater.get_batch_size() > 0:
+            update_stats = self.batch_graph_updater.flush_batch()
+            print(f"🔄 Final graph update: +{update_stats['nodes_added']} nodes, +{update_stats['edges_added']} edges")
+            return update_stats
+        return {'nodes_added': 0, 'nodes_updated': 0, 'edges_added': 0, 'edges_updated': 0}
 
     def _stable_cross_entropy(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
