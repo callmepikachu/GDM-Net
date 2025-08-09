@@ -17,9 +17,9 @@ model:
   freeze_bert: true  # 冻结BERT参数，只训练下游任务层
 
 data:
-  train_path: "data/hotpotqa_final_train.json"  # 使用完整训练集
-  val_path: "data/hotpotqa_final_val.json"      # 使用完整验证集
-  test_path: "data/hotpotqa_final_val.json"     # 测试集使用验证集
+  train_path: "data/hotpotqa_official_train.json"  # 使用官方训练集
+  val_path: "data/hotpotqa_official_val.json"      # 使用官方验证集
+  test_path: "data/hotpotqa_official_val.json"     # 测试集使用验证集
   max_length: 512  # 完整序列长度
   max_query_length: 64
 
