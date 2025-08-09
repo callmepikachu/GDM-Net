@@ -247,7 +247,7 @@ class HotpotQADataset(Dataset):
             entity_spans[i] = torch.tensor([start, end], dtype=torch.long)
         
         # Create entity and relation labels for auxiliary tasks (optional)
-        entity_labels = torch.zeros(doc_encoding['input_ids'].size(1), dtype=torch.long)
+        entity_labels = torch.zeros(doc_input_ids.size(0), dtype=torch.long)  # 使用预处理的doc_input_ids
         relation_labels = torch.zeros(len(relations), dtype=torch.long)
 
         # Simple entity labeling based on spans
