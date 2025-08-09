@@ -127,7 +127,7 @@ def main():
         logger=pl_logger,
         enable_progress_bar=True,
         enable_model_summary=True,
-        deterministic=True
+        deterministic=True  # 保持确定性，只对特定操作临时关闭
     )
     
     # Log model summary

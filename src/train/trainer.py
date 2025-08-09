@@ -151,10 +151,20 @@ class GDMNetTrainer(pl.LightningModule):
 
         # 🔍 调试信息：检查标签分布
         if batch_idx % 500 == 0:
-            label_counts = torch.bincount(labels, minlength=self.num_classes)
-            label_dist = label_counts.float() / label_counts.sum()
-            print(f"🔍 Batch {batch_idx} label distribution: {label_dist.tolist()}")
-            print(f"🔍 Label counts: {label_counts.tolist()}")
+            # 只对bincount操作临时关闭确定性检查
+            with torch.backends.cudnn.flags(enabled=False):
+                # 使用warn_only=True来允许非确定性操作
+                original_deterministic = torch.are_deterministic_algorithms_enabled()
+                torch.use_deterministic_algorithms(False, warn_only=True)
+
+                try:
+                    label_counts = torch.bincount(labels, minlength=self.num_classes)
+                    label_dist = label_counts.float() / label_counts.sum()
+                    print(f"🔍 Batch {batch_idx} label distribution: {label_dist.tolist()}")
+                    print(f"🔍 Label counts: {label_counts.tolist()}")
+                finally:
+                    # 恢复原始设置
+                    torch.use_deterministic_algorithms(original_deterministic)
 
         # 记录指标
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, prog_bar=True, batch_size=batch_size)
