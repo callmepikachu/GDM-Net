@@ -133,6 +133,9 @@ class HotpotQADataset(Dataset):
         with open(pretokenized_file, 'rb') as f:
             self.tokenized_data = pickle.load(f)
 
+        # 从tokenized_data中提取原始数据，确保data属性存在
+        self.data = [item['original_sample'] for item in self.tokenized_data]
+
     def _load_data(self) -> List[Dict[str, Any]]:
         """Load data from JSON file."""
         with open(self.data_path, 'r', encoding='utf-8') as f:
@@ -180,7 +183,13 @@ class HotpotQADataset(Dataset):
             self.tokenized_data.append(tokenized_sample)
     
     def __len__(self) -> int:
-        return len(self.data)
+        """Return the number of samples in the dataset."""
+        if hasattr(self, 'tokenized_data'):
+            return len(self.tokenized_data)
+        elif hasattr(self, 'data'):
+            return len(self.data)
+        else:
+            return 0
 
     def _extract_label(self, sample):
         """Extract label from a sample."""
