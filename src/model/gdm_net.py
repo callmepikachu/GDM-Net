@@ -345,6 +345,23 @@ class GDMNet(nn.Module):
             return torch.tensor(1.609, device=logits.device, requires_grad=True)  # ln(5)
 
         return loss
+
+    def _stable_cross_entropy_multi(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        稳定的多类别cross entropy，用于辅助任务
+        处理ignore_index=0的情况
+        """
+        # 过滤掉ignore_index=0的样本
+        valid_mask = (labels != 0)
+        if not valid_mask.any():
+            # 如果没有有效标签，返回零损失
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+        valid_logits = logits[valid_mask]
+        valid_labels = labels[valid_mask]
+
+        # 使用稳定的cross entropy
+        return self._stable_cross_entropy(valid_logits, valid_labels)
     
     def compute_loss(
         self,
@@ -379,16 +396,43 @@ class GDMNet(nn.Module):
             print(f"✅ Stable loss {self._loss_debug_count}: {main_loss.item():.6f}")
             self._loss_debug_count += 1
 
-        # 🎯 专注于主任务，暂时禁用辅助损失
+        # 🎯 重新启用辅助损失，提升整体性能
         total_loss = main_loss
         loss_dict = {
-            'main_loss': main_loss,
-            'total_loss': total_loss
+            'main_loss': main_loss
         }
 
-        # 辅助损失暂时禁用，等主损失稳定后再启用
-        # TODO: 在主损失完全稳定后重新启用entity和relation损失
+        # Entity extraction auxiliary loss
+        if entity_labels is not None and 'entity_logits' in outputs:
+            entity_logits = outputs['entity_logits']
+            batch_size, seq_len, num_classes = entity_logits.shape
 
+            # Flatten for loss computation
+            entity_logits_flat = entity_logits.view(-1, num_classes)
+            entity_labels_flat = entity_labels.view(-1)
+
+            entity_loss = self._stable_cross_entropy_multi(entity_logits_flat, entity_labels_flat)
+            total_loss += self.entity_loss_weight * entity_loss
+            loss_dict['entity_loss'] = entity_loss
+
+        # Relation extraction auxiliary loss
+        if relation_labels is not None and 'relation_logits' in outputs:
+            relation_logits = outputs['relation_logits']
+            if relation_logits.numel() > 0 and relation_labels.numel() > 0:
+                # Ensure shapes match
+                min_size = min(relation_logits.size(1), relation_labels.size(1))
+                if min_size > 0:
+                    relation_logits_subset = relation_logits[:, :min_size]
+                    relation_labels_subset = relation_labels[:, :min_size]
+
+                    relation_logits_flat = relation_logits_subset.view(-1, relation_logits.size(-1))
+                    relation_labels_flat = relation_labels_subset.view(-1)
+
+                    relation_loss = self._stable_cross_entropy_multi(relation_logits_flat, relation_labels_flat)
+                    total_loss += self.relation_loss_weight * relation_loss
+                    loss_dict['relation_loss'] = relation_loss
+
+        loss_dict['total_loss'] = total_loss
         return loss_dict
     
     def predict(

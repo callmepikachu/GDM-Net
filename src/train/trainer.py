@@ -261,11 +261,11 @@ class GDMNetTrainer(pl.LightningModule):
         print(f"Trainable parameters: {sum(p.numel() for p in trainable_params):,}")
         print(f"Total parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
-        # Optimizer with enhanced numerical stability
+        # Optimizer with enhanced regularization
         optimizer = torch.optim.AdamW(
             trainable_params,
             lr=learning_rate,
-            weight_decay=0.01,  # 减少权重衰减
+            weight_decay=0.02,  # 增加权重衰减减少过拟合
             eps=1e-8,  # 更大的eps提高稳定性
             betas=(0.9, 0.999),  # 标准beta值
             amsgrad=True  # 使用AMSGrad变体提高稳定性
@@ -285,8 +285,12 @@ class GDMNetTrainer(pl.LightningModule):
                 total_steps = int((5000 / batch_size) * max_epochs)
 
             total_steps = int(total_steps)
-            warmup_steps = int(0.2 * total_steps)  # 增加warmup比例到20%
+            warmup_steps = int(0.1 * total_steps)  # 10% warmup
 
+            # 使用cosine annealing with warmup获得更好的收敛
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+
+            # 创建warmup + cosine scheduler
             scheduler = get_linear_schedule_with_warmup(
                 optimizer,
                 num_warmup_steps=warmup_steps,
@@ -341,6 +345,26 @@ class GDMNetTrainer(pl.LightningModule):
         
         return DataLoader(
             self.val_dataset,
+            batch_size=self.config['training']['batch_size'],
+            shuffle=False,
+            num_workers=self.config['training']['num_workers'],
+            collate_fn=self.data_collator,
+            pin_memory=True
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        """Create test dataloader."""
+        if not hasattr(self, 'test_dataset') or self.test_dataset is None:
+            self.test_dataset = HotpotQADataset(
+                data_path=self.config['data']['test_path'],
+                tokenizer_name=self.config['model']['bert_model_name'],
+                max_length=self.config['data']['max_length'],
+                max_query_length=self.config['data']['max_query_length'],
+                num_entities=self.config['model']['num_entities']
+            )
+
+        return DataLoader(
+            self.test_dataset,
             batch_size=self.config['training']['batch_size'],
             shuffle=False,
             num_workers=self.config['training']['num_workers'],

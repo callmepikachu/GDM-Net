@@ -13,31 +13,31 @@ model:
   num_gnn_layers: 3  # 增加GNN层数以提升性能
   num_reasoning_hops: 4  # 增加推理跳数
   fusion_method: "gate"
-  dropout_rate: 0.1
+  dropout_rate: 0.2  # 增加dropout减少过拟合
   freeze_bert: true  # 冻结BERT参数，只训练下游任务层
 
 data:
-  train_path: "data/hotpotqa_official_train.json"
-  val_path: "data/hotpotqa_official_val.json"
-  test_path: "data/hotpotqa_official_val.json"
+  train_path: "data/hotpotqa_final_train.json"  # 使用完整训练集
+  val_path: "data/hotpotqa_final_val.json"      # 使用完整验证集
+  test_path: "data/hotpotqa_final_val.json"     # 测试集使用验证集
   max_length: 512  # 完整序列长度
   max_query_length: 64
 
 training:
-  max_epochs: 20  # 增加训练轮数
-  batch_size: 8   # 保持小批次大小
+  max_epochs: 30  # 进一步增加训练轮数
+  batch_size: 16  # 增加批次大小提高训练效率
   learning_rate: 1e-4  # 适中的学习率，既稳定又能学习
   num_workers: 4  # 多进程数据加载
   accelerator: "gpu"
   devices: 1
   precision: 32
   gradient_clip_val: 0.5  # 更严格的梯度裁剪
-  accumulate_grad_batches: 2  # 梯度累积保持有效批次大小
+  accumulate_grad_batches: 1  # 减少梯度累积，因为batch size已增加
   val_check_interval: 0.5
   log_every_n_steps: 50
   checkpoint_dir: "checkpoints"
   early_stopping: true
-  patience: 10  # 增加耐心值
+  patience: 15  # 增加耐心值适应更长训练
 
 logging:
   type: "tensorboard"
