@@ -145,12 +145,19 @@ class HotpotQADataset(Dataset):
 
         # 优先查找分片元数据文件
         sharded_metadata_file = os.path.join(self.pretokenized_dir, f"sharded_metadata_{base_name}.json")
+
+        # 调试：打印查找的路径
+        print(f"🔍 Looking for sharded metadata: {sharded_metadata_file}")
+        print(f"🔍 File exists: {os.path.exists(sharded_metadata_file)}")
+
         if os.path.exists(sharded_metadata_file):
             return sharded_metadata_file
 
         # 回退到单文件模式
         filename = os.path.basename(self.data_path).replace('.json', '.pkl')
-        return os.path.join(self.pretokenized_dir, f"tokenized_{filename}")
+        single_file = os.path.join(self.pretokenized_dir, f"tokenized_{filename}")
+        print(f"🔍 Fallback to single file: {single_file}")
+        return single_file
 
     def _load_pretokenized_data(self, pretokenized_file: str):
         """加载预处理的tokenization数据（支持分片和缓存）"""

@@ -17,9 +17,9 @@ model:
   freeze_bert: true  # 冻结BERT参数，只训练下游任务层
 
 data:
-  train_path: "data/official_hotpotqa/train.json"           # 完整官方训练集 (90,447样本)
-  val_path: "data/official_hotpotqa/dev_distractor.json"    # 官方验证集 (7,405样本)
-  test_path: "data/official_hotpotqa/dev_distractor.json"   # 测试集使用验证集
+  train_path: "/root/autodl-fs/train.json"                 # 训练集路径 (90,447样本)
+  val_path: "/root/autodl-fs/dev_distractor.json"          # 验证集路径 (7,405样本)
+  test_path: "/root/autodl-fs/dev_fullwiki.json"           # 测试集路径
   max_length: 512  # 完整序列长度
   max_query_length: 64
 
