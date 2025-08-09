@@ -21,7 +21,8 @@ def preprocess_dataset(
     max_length: int = 512,
     max_query_length: int = 64,
     batch_size: int = 64,
-    use_gpu: bool = True
+    use_gpu: bool = True,
+    shard_size: int = 1000
 ):
     """
     预处理数据集，进行tokenization并保存
@@ -34,6 +35,7 @@ def preprocess_dataset(
         max_query_length: 查询最大长度
         batch_size: 批处理大小（GPU加速用）
         use_gpu: 是否使用GPU加速
+        shard_size: 每个分片的样本数量
     """
     
     print(f"🚀 开始预处理数据集: {input_path}")
@@ -173,30 +175,46 @@ def preprocess_dataset(
                     print(f"⚠️  跳过样本 {start_idx + i}: {e2}")
                     continue
     
-    # 保存预处理结果
-    output_file = os.path.join(output_dir, f"tokenized_{os.path.basename(input_path).replace('.json', '.pkl')}")
-    
-    print(f"💾 保存预处理结果到: {output_file}")
-    with open(output_file, 'wb') as f:
-        pickle.dump(tokenized_data, f)
-    
-    # 保存元数据
+    # 🚀 分片保存预处理结果
+    base_name = os.path.basename(input_path).replace('.json', '')
+    num_shards = (len(tokenized_data) + shard_size - 1) // shard_size
+
+    print(f"💾 分片保存预处理结果: {num_shards} 个分片，每片 {shard_size} 样本")
+
+    shard_files = []
+    for shard_idx in range(num_shards):
+        start_idx = shard_idx * shard_size
+        end_idx = min(start_idx + shard_size, len(tokenized_data))
+        shard_data = tokenized_data[start_idx:end_idx]
+
+        shard_file = os.path.join(output_dir, f"tokenized_{base_name}_shard_{shard_idx:04d}.pkl")
+        with open(shard_file, 'wb') as f:
+            pickle.dump(shard_data, f)
+
+        shard_files.append(shard_file)
+        print(f"   保存分片 {shard_idx+1}/{num_shards}: {len(shard_data)} 样本 -> {os.path.basename(shard_file)}")
+
+    # 保存分片索引元数据
     metadata = {
         'num_samples': len(tokenized_data),
+        'num_shards': num_shards,
+        'shard_size': shard_size,
+        'shard_files': [os.path.basename(f) for f in shard_files],
         'tokenizer_name': tokenizer_name,
         'max_length': max_length,
         'max_query_length': max_query_length,
         'original_file': input_path
     }
-    
-    metadata_file = os.path.join(output_dir, f"metadata_{os.path.basename(input_path).replace('.json', '.json')}")
+
+    metadata_file = os.path.join(output_dir, f"sharded_metadata_{base_name}.json")
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2)
-    
-    print(f"✅ 预处理完成!")
-    print(f"   - 处理样本数: {len(tokenized_data)}")
-    print(f"   - 输出文件: {output_file}")
-    print(f"   - 元数据文件: {metadata_file}")
+
+    print(f"✅ 分片预处理完成!")
+    print(f"   - 总样本数: {len(tokenized_data)}")
+    print(f"   - 分片数量: {num_shards}")
+    print(f"   - 每片大小: {shard_size}")
+    print(f"   - 元数据文件: {os.path.basename(metadata_file)}")
 
 
 def main():
@@ -209,6 +227,7 @@ def main():
     parser.add_argument("--max_query_length", type=int, default=64, help="查询最大长度")
     parser.add_argument("--batch_size", type=int, default=64, help="批处理大小（GPU加速）")
     parser.add_argument("--no_gpu", action="store_true", help="禁用GPU加速")
+    parser.add_argument("--shard_size", type=int, default=1000, help="每个分片的样本数量")
     
     args = parser.parse_args()
     
@@ -219,7 +238,8 @@ def main():
         max_length=args.max_length,
         max_query_length=args.max_query_length,
         batch_size=args.batch_size,
-        use_gpu=not args.no_gpu
+        use_gpu=not args.no_gpu,
+        shard_size=args.shard_size
     )
 
 

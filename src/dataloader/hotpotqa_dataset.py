@@ -140,12 +140,50 @@ class HotpotQADataset(Dataset):
             self.logger.info("Tokenization pre-computation completed!")
     
     def _get_pretokenized_file_path(self) -> str:
-        """获取预处理文件路径"""
+        """获取预处理文件路径（优先查找分片元数据）"""
+        base_name = os.path.basename(self.data_path).replace('.json', '')
+
+        # 优先查找分片元数据文件
+        sharded_metadata_file = os.path.join(self.pretokenized_dir, f"sharded_metadata_{base_name}.json")
+        if os.path.exists(sharded_metadata_file):
+            return sharded_metadata_file
+
+        # 回退到单文件模式
         filename = os.path.basename(self.data_path).replace('.json', '.pkl')
         return os.path.join(self.pretokenized_dir, f"tokenized_{filename}")
 
     def _load_pretokenized_data(self, pretokenized_file: str):
-        """加载预处理的tokenization数据（使用全局缓存避免重复加载）"""
+        """加载预处理的tokenization数据（支持分片和缓存）"""
+        if pretokenized_file.endswith('.json'):
+            # 分片模式：加载元数据
+            self._load_sharded_data(pretokenized_file)
+        else:
+            # 单文件模式：直接加载
+            self._load_single_file_data(pretokenized_file)
+
+    def _load_sharded_data(self, metadata_file: str):
+        """加载分片数据的元数据"""
+        with open(metadata_file, 'r') as f:
+            self.shard_metadata = json.load(f)
+
+        self.num_samples = self.shard_metadata['num_samples']
+        self.num_shards = self.shard_metadata['num_shards']
+        self.shard_size = self.shard_metadata['shard_size']
+        self.shard_files = [
+            os.path.join(self.pretokenized_dir, fname)
+            for fname in self.shard_metadata['shard_files']
+        ]
+
+        # 初始化分片缓存
+        self.shard_cache = {}
+
+        # 创建虚拟data属性用于兼容性
+        self.data = [None] * self.num_samples  # 占位符
+
+        self.logger.info(f"Loaded sharded metadata: {self.num_shards} shards, {self.num_samples} samples")
+
+    def _load_single_file_data(self, pretokenized_file: str):
+        """加载单文件数据（保持向后兼容）"""
         global _GLOBAL_TOKENIZED_CACHE
 
         # 检查全局缓存
@@ -224,9 +262,34 @@ class HotpotQADataset(Dataset):
 
             self.tokenized_data.append(tokenized_sample)
     
+    def _get_sample_from_shard(self, idx: int) -> Dict[str, Any]:
+        """从分片中获取样本（按需加载）"""
+        # 计算样本属于哪个分片
+        shard_idx = idx // self.shard_size
+        local_idx = idx % self.shard_size
+
+        # 检查分片是否已缓存
+        if shard_idx not in self.shard_cache:
+            # 按需加载分片
+            shard_file = self.shard_files[shard_idx]
+
+            global _GLOBAL_TOKENIZED_CACHE
+            if shard_file in _GLOBAL_TOKENIZED_CACHE:
+                shard_data = _GLOBAL_TOKENIZED_CACHE[shard_file]
+            else:
+                with open(shard_file, 'rb') as f:
+                    shard_data = pickle.load(f)
+                _GLOBAL_TOKENIZED_CACHE[shard_file] = shard_data
+
+            self.shard_cache[shard_idx] = shard_data
+
+        return self.shard_cache[shard_idx][local_idx]
+
     def __len__(self) -> int:
         """Return the number of samples in the dataset."""
-        if hasattr(self, 'tokenized_data'):
+        if hasattr(self, 'num_samples'):
+            return self.num_samples
+        elif hasattr(self, 'tokenized_data'):
             return len(self.tokenized_data)
         elif hasattr(self, 'data'):
             return len(self.data)
@@ -261,9 +324,14 @@ class HotpotQADataset(Dataset):
         return label_counts
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """Get a single sample using pre-computed tokenization."""
-        # 🚀 使用预计算的tokenization，消除CPU瓶颈
-        tokenized_sample = self.tokenized_data[idx]
+        """Get a single sample using pre-computed tokenization (支持分片访问)."""
+        if hasattr(self, 'shard_metadata'):
+            # 分片模式：按需加载分片
+            tokenized_sample = self._get_sample_from_shard(idx)
+        else:
+            # 单文件模式：直接访问
+            tokenized_sample = self.tokenized_data[idx]
+
         sample = tokenized_sample['original_sample']
 
         # Extract components
