@@ -285,7 +285,7 @@ class GDMNetTrainer(pl.LightningModule):
                 total_steps = int((5000 / batch_size) * max_epochs)
 
             total_steps = int(total_steps)
-            warmup_steps = int(0.1 * total_steps)  # 10% warmup
+            warmup_steps = int(0.05 * total_steps)  # 5% warmup适应大batch size
 
             # 使用cosine annealing with warmup获得更好的收敛
             from torch.optim.lr_scheduler import CosineAnnealingLR

@@ -21,14 +21,14 @@ def setup_callbacks(config):
     """Setup training callbacks."""
     callbacks = []
     
-    # Model checkpoint callback
+    # Model checkpoint callback - 只保留最佳模型节省空间
     checkpoint_callback = ModelCheckpoint(
         dirpath=config['training']['checkpoint_dir'],
-        filename='gdmnet-{epoch:02d}-{val_acc:.4f}',
+        filename='gdmnet-best',  # 固定文件名，覆盖更新
         monitor='val_acc',
         mode='max',
-        save_top_k=3,
-        save_last=True,
+        save_top_k=1,      # 只保留最好的1个
+        save_last=False,   # 不保存最后一个
         verbose=True
     )
     callbacks.append(checkpoint_callback)
