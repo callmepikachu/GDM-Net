@@ -230,33 +230,37 @@ class GDMNet(nn.Module):
             node_features, edge_index, edge_type, batch_indices
         )
 
-        # Step 6: Dual memory processing (optional enhancement)
-        memory_output, episodic_output, semantic_output = self.dual_memory(
-            query_pooled
-        )
-
-        # Step 7: Multi-hop reasoning and fusion
+        # Step 6: Multi-hop reasoning (先进行推理获取图和路径表示)
         fused_representation, path_representation, graph_representation = self.reasoning_module(
             query_pooled, doc_pooled, updated_node_features, edge_index, edge_type, batch_indices
         )
 
-        # Step 8: Final classification
-        # Dimensions are stable now - remove debug output
+        # Step 7: NEW - Dual Memory Processing (使用推理结果)
+        memory_output, episodic_output, semantic_output = self.dual_memory(
+            doc_representation=doc_pooled,
+            query_representation=query_pooled,
+            graph_representation=graph_representation,
+            path_representation=path_representation
+        )
 
-        # Ensure fused_representation has correct dimension
-        if fused_representation.size(-1) != self.hidden_size:
-            print(f"WARNING: fused_representation dimension mismatch! Expected {self.hidden_size}, got {fused_representation.size(-1)}")
+        # Step 8: Enhanced Final Classification with Memory Integration
+        # 将记忆输出与原始融合表示结合
+        enhanced_representation = fused_representation + memory_output
+
+        # 确保维度正确
+        if enhanced_representation.size(-1) != self.hidden_size:
+            print(f"WARNING: enhanced_representation dimension mismatch! Expected {self.hidden_size}, got {enhanced_representation.size(-1)}")
             # Project to correct dimension
             if not hasattr(self, 'emergency_projection'):
-                self.emergency_projection = nn.Linear(fused_representation.size(-1), self.hidden_size).to(fused_representation.device)
-            fused_representation = self.emergency_projection(fused_representation)
+                self.emergency_projection = nn.Linear(enhanced_representation.size(-1), self.hidden_size).to(enhanced_representation.device)
+            enhanced_representation = self.emergency_projection(enhanced_representation)
 
-        # 🔥 极简的分类器应用
+        # 🔥 记忆增强的分类器应用
         # 标准化输入
-        fused_representation = F.layer_norm(fused_representation, [fused_representation.size(-1)])
+        enhanced_representation = F.layer_norm(enhanced_representation, [enhanced_representation.size(-1)])
 
         # 直接应用分类器
-        logits = self.classifier(fused_representation)
+        logits = self.classifier(enhanced_representation)
 
         # Prepare comprehensive outputs showcasing dual-path processing
         outputs = {
@@ -431,6 +435,17 @@ class GDMNet(nn.Module):
                     relation_loss = self._stable_cross_entropy_multi(relation_logits_flat, relation_labels_flat)
                     total_loss += self.relation_loss_weight * relation_loss
                     loss_dict['relation_loss'] = relation_loss
+
+        # 可选：记忆一致性损失（确保情节记忆和语义记忆的协调）
+        if 'episodic_output' in outputs and 'semantic_output' in outputs:
+            episodic_out = outputs['episodic_output']  # [batch_size, memory_size]
+            semantic_out = outputs['semantic_output']  # [batch_size, memory_size]
+
+            # 计算记忆间的相似性损失（鼓励适度的一致性，但不完全相同）
+            memory_consistency_loss = F.mse_loss(episodic_out, semantic_out)
+            # 使用较小的权重，因为我们希望记忆有所区别
+            total_loss += 0.01 * memory_consistency_loss
+            loss_dict['memory_consistency_loss'] = memory_consistency_loss
 
         loss_dict['total_loss'] = total_loss
         return loss_dict

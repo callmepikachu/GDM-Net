@@ -35,6 +35,10 @@ class DualMemorySystem(nn.Module):
         # Memory access mechanisms
         self.episodic_query_projection = nn.Linear(hidden_size, memory_size)
         self.semantic_query_projection = nn.Linear(hidden_size, memory_size)
+
+        # 输入融合投影层
+        self.episodic_input_projection = nn.Linear(hidden_size * 2, hidden_size)  # graph + path
+        self.semantic_input_projection = nn.Linear(hidden_size * 2, hidden_size)  # doc + query
         
         # Memory update mechanisms
         self.episodic_update_gate = nn.Linear(hidden_size + memory_size, memory_size)
@@ -62,27 +66,44 @@ class DualMemorySystem(nn.Module):
     
     def forward(
         self,
-        query_representations: torch.Tensor,
+        doc_representation: torch.Tensor,
+        query_representation: torch.Tensor,
+        graph_representation: torch.Tensor,
+        path_representation: torch.Tensor,
         update_memory: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass through dual memory system.
-        
+
         Args:
-            query_representations: [batch_size, hidden_size]
+            doc_representation: [batch_size, hidden_size] - 文档的池化表示
+            query_representation: [batch_size, hidden_size] - 查询的表示
+            graph_representation: [batch_size, hidden_size] - 来自GraphReader的图表示
+            path_representation: [batch_size, hidden_size] - 来自PathFinder的路径表示
             update_memory: Whether to update memory slots
-        
+
         Returns:
-            fused_output: [batch_size, hidden_size]
-            episodic_output: [batch_size, memory_size]
-            semantic_output: [batch_size, memory_size]
+            memory_output: [batch_size, hidden_size] - 融合记忆输出
+            episodic_output: [batch_size, memory_size] - 情节记忆输出
+            semantic_output: [batch_size, memory_size] - 语义记忆输出
         """
-        
-        batch_size = query_representations.size(0)
-        
-        # Project queries for memory access
-        episodic_query = self.episodic_query_projection(query_representations)
-        semantic_query = self.semantic_query_projection(query_representations)
+
+        batch_size = query_representation.size(0)
+
+        # 情节记忆查询：结合具体路径信息（图+路径代表具体事实）
+        # 将graph_representation和path_representation结合作为具体事实的编码
+        episodic_input = torch.cat([graph_representation, path_representation], dim=1)
+        episodic_context = self.episodic_input_projection(episodic_input)
+
+        # 结合查询和具体路径信息
+        episodic_query_input = query_representation + episodic_context
+        episodic_query = self.episodic_query_projection(episodic_query_input)
+
+        # 语义记忆查询：结合抽象理解（文档+查询代表抽象模式）
+        semantic_input = torch.cat([doc_representation, query_representation], dim=1)
+        semantic_context = self.semantic_input_projection(semantic_input)
+
+        semantic_query = self.semantic_query_projection(semantic_context)
         
         # Access episodic memory with enhanced numerical stability
         episodic_scores = torch.matmul(episodic_query, self.episodic_memory.t())
@@ -108,7 +129,7 @@ class DualMemorySystem(nn.Module):
         # Update memory if specified
         if update_memory and self.training:
             self._update_memory(
-                query_representations,
+                query_representation,  # 使用新的参数名
                 episodic_output,
                 semantic_output,
                 episodic_attention,
