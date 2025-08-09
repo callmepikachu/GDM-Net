@@ -6,6 +6,22 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from typing import List, Dict, Any, Optional
 import logging
+
+# 🚀 全局缓存，避免多worker重复加载
+_GLOBAL_TOKENIZED_CACHE = {}
+
+def clear_global_cache():
+    """清理全局缓存（可选，用于释放内存）"""
+    global _GLOBAL_TOKENIZED_CACHE
+    _GLOBAL_TOKENIZED_CACHE.clear()
+
+def get_cache_info():
+    """获取缓存信息"""
+    global _GLOBAL_TOKENIZED_CACHE
+    return {
+        'cached_files': list(_GLOBAL_TOKENIZED_CACHE.keys()),
+        'cache_count': len(_GLOBAL_TOKENIZED_CACHE)
+    }
 from ..utils.graph_utils import build_graph
 
 
@@ -129,18 +145,44 @@ class HotpotQADataset(Dataset):
         return os.path.join(self.pretokenized_dir, f"tokenized_{filename}")
 
     def _load_pretokenized_data(self, pretokenized_file: str):
-        """加载预处理的tokenization数据"""
-        with open(pretokenized_file, 'rb') as f:
-            self.tokenized_data = pickle.load(f)
+        """加载预处理的tokenization数据（使用全局缓存避免重复加载）"""
+        global _GLOBAL_TOKENIZED_CACHE
+
+        # 检查全局缓存
+        if pretokenized_file in _GLOBAL_TOKENIZED_CACHE:
+            self.logger.info(f"Using cached tokenized data for {pretokenized_file}")
+            self.tokenized_data = _GLOBAL_TOKENIZED_CACHE[pretokenized_file]
+        else:
+            self.logger.info(f"Loading tokenized data from disk: {pretokenized_file}")
+            with open(pretokenized_file, 'rb') as f:
+                tokenized_data = pickle.load(f)
+
+            # 缓存到全局变量
+            _GLOBAL_TOKENIZED_CACHE[pretokenized_file] = tokenized_data
+            self.tokenized_data = tokenized_data
+            self.logger.info(f"Cached tokenized data for future workers")
 
         # 从tokenized_data中提取原始数据，确保data属性存在
         self.data = [item['original_sample'] for item in self.tokenized_data]
 
     def _load_data(self) -> List[Dict[str, Any]]:
-        """Load data from JSON file."""
-        with open(self.data_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return data
+        """Load data from JSON file (使用全局缓存避免重复加载)."""
+        global _GLOBAL_TOKENIZED_CACHE
+
+        cache_key = f"raw_data_{self.data_path}"
+
+        if cache_key in _GLOBAL_TOKENIZED_CACHE:
+            self.logger.info(f"Using cached raw data for {self.data_path}")
+            return _GLOBAL_TOKENIZED_CACHE[cache_key]
+        else:
+            self.logger.info(f"Loading raw data from disk: {self.data_path}")
+            with open(self.data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # 缓存原始数据
+            _GLOBAL_TOKENIZED_CACHE[cache_key] = data
+            self.logger.info(f"Cached raw data for future workers")
+            return data
 
     def _precompute_tokenization(self):
         """预计算所有样本的tokenization，消除训练时的CPU瓶颈"""
