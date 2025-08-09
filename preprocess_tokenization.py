@@ -67,8 +67,22 @@ def preprocess_dataset(
 
     for sample in data:
         query = sample.get('question', '')
-        if isinstance(sample.get('context'), list):
-            document = ' '.join(sample.get('context', []))
+
+        # 适配官方HotpotQA格式：context是[title, sentences]的列表
+        context = sample.get('context', [])
+        if isinstance(context, list) and len(context) > 0:
+            # 将context转换为文档文本
+            document_parts = []
+            for ctx_item in context:
+                if isinstance(ctx_item, list) and len(ctx_item) >= 2:
+                    title = ctx_item[0]  # 文档标题
+                    sentences = ctx_item[1]  # 句子列表
+                    if isinstance(sentences, list):
+                        doc_text = f"{title}. " + " ".join(sentences)
+                    else:
+                        doc_text = f"{title}. {sentences}"
+                    document_parts.append(doc_text)
+            document = " ".join(document_parts)
         else:
             document = sample.get('document', '')
 
@@ -127,6 +141,23 @@ def preprocess_dataset(
             # 回退到单个样本处理
             for i, (query, document, original) in enumerate(zip(batch_queries, batch_documents, batch_originals)):
                 try:
+                    # 处理单个样本的context格式
+                    context = original.get('context', [])
+                    if isinstance(context, list) and len(context) > 0:
+                        document_parts = []
+                        for ctx_item in context:
+                            if isinstance(ctx_item, list) and len(ctx_item) >= 2:
+                                title = ctx_item[0]
+                                sentences = ctx_item[1]
+                                if isinstance(sentences, list):
+                                    doc_text = f"{title}. " + " ".join(sentences)
+                                else:
+                                    doc_text = f"{title}. {sentences}"
+                                document_parts.append(doc_text)
+                        document = " ".join(document_parts)
+                    else:
+                        document = original.get('document', '')
+
                     query_tokens = tokenizer(query, max_length=max_query_length, padding='max_length', truncation=True, return_tensors='pt')
                     doc_tokens = tokenizer(document, max_length=max_length, padding='max_length', truncation=True, return_tensors='pt')
 
