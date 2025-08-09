@@ -220,6 +220,16 @@ class GDMNet(nn.Module):
             doc_sequence, doc_attention_mask, entity_spans
         )
 
+        # 🔍 调试信息：检查实体关系提取质量
+        if not hasattr(self, '_debug_step'):
+            self._debug_step = 0
+        self._debug_step += 1
+
+        if self._debug_step % 100 == 0:
+            avg_entities = sum(len(entities) for entities in entities_batch) / len(entities_batch) if entities_batch else 0
+            avg_relations = sum(len(relations) for relations in relations_batch) / len(relations_batch) if relations_batch else 0
+            print(f"🔍 Step {self._debug_step}: Avg entities={avg_entities:.1f}, Avg relations={avg_relations:.1f}")
+
         # Step 4: Graph construction
         node_features, edge_index, edge_type, batch_indices = self.graph_writer(
             entities_batch, relations_batch, doc_sequence

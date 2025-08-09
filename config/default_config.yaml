@@ -15,6 +15,8 @@ model:
   fusion_method: "gate"
   dropout_rate: 0.2  # 增加dropout减少过拟合
   freeze_bert: true  # 冻结BERT参数，只训练下游任务层
+  entity_loss_weight: 0.5  # 增加辅助损失权重
+  relation_loss_weight: 0.5  # 增加辅助损失权重
 
 data:
   train_path: "/root/autodl-fs/train.json"                 # 训练集路径 (90,447样本)
@@ -26,7 +28,7 @@ data:
 training:
   max_epochs: 30  # 进一步增加训练轮数
   batch_size: 8   # 进一步减小batch size
-  learning_rate: 2e-4  # 增加学习率适应更大batch size
+  learning_rate: 1e-4  # 调整学习率平衡收敛速度和稳定性
   num_workers: 16  # 最大化数据加载并行度
   accelerator: "gpu"
   devices: 1
