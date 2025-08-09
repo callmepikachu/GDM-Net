@@ -25,9 +25,9 @@ class PathFinder(nn.Module):
         self.query_projection = nn.Linear(hidden_size, hidden_size)
         self.node_projection = nn.Linear(hidden_size, hidden_size)
 
-        # Path aggregation
+        # Path aggregation - 修复维度问题
         self.path_aggregator = nn.Sequential(
-            nn.Linear(hidden_size * max_hops, hidden_size),
+            nn.Linear(hidden_size, hidden_size),  # 直接使用hidden_size而不是乘以max_hops
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             nn.Linear(hidden_size, hidden_size)
@@ -165,6 +165,9 @@ class PathFinder(nn.Module):
 
         path_reprs = []
         for path in paths:
+            if len(path) == 0:  # 跳过空路径
+                continue
+
             # Get node features for this path
             path_features = node_features[path]  # [path_length, hidden_size]
 
@@ -179,11 +182,16 @@ class PathFinder(nn.Module):
             else:
                 path_features = path_features[:self.max_hops]
 
-            path_reprs.append(path_features.flatten())
+            # 使用平均池化而不是flatten，保持hidden_size维度
+            path_repr = torch.mean(path_features, dim=0)  # [hidden_size]
+            path_reprs.append(path_repr)
+
+        if not path_reprs:  # 如果没有有效路径
+            return torch.zeros(self.hidden_size, device=node_features.device)
 
         # Average all path representations
-        path_reprs = torch.stack(path_reprs)
-        aggregated = path_reprs.mean(dim=0)
+        path_reprs = torch.stack(path_reprs)  # [num_paths, hidden_size]
+        aggregated = path_reprs.mean(dim=0)   # [hidden_size]
 
         # Project to hidden size
         return self.path_aggregator(aggregated)
