@@ -18,8 +18,8 @@ class PathFinder(nn.Module):
         super().__init__()
 
         self.hidden_size = hidden_size
-        self.max_hops = min(max_hops, 2)  # 减少最大跳数缓解CPU负担
-        self.max_paths = min(max_paths, 4)  # 减少路径数量
+        self.max_hops = min(max_hops, 2)  # 还原到2跳
+        self.max_paths = min(max_paths, 4)  # 还原到4条路径
 
         # Query-node similarity computation
         self.query_projection = nn.Linear(hidden_size, hidden_size)

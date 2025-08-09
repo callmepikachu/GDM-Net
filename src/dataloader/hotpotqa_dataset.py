@@ -1,6 +1,7 @@
 import json
 import torch
 import os
+import pickle
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from typing import List, Dict, Any, Optional
@@ -18,13 +19,15 @@ class HotpotQADataset(Dataset):
         max_length: int = 512,
         max_query_length: int = 64,
         num_entities: int = 9,
-        num_relations: int = 10
+        num_relations: int = 10,
+        pretokenized_dir: str = "/root/autodl-tmp/hotpotqa-pretokenized"
     ):
         self.data_path = data_path
         self.max_length = max_length
         self.max_query_length = max_query_length
         self.num_entities = num_entities
         self.num_relations = num_relations
+        self.pretokenized_dir = pretokenized_dir
 
         # Entity type mapping
         self.entity_type_map = {
@@ -97,17 +100,84 @@ class HotpotQADataset(Dataset):
 
             self.tokenizer = BasicTokenizer()
 
-        # Load data
-        self.data = self._load_data()
+        # 🚀 尝试加载预处理的tokenization数据
+        pretokenized_file = self._get_pretokenized_file_path()
 
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.info(f"Loaded {len(self.data)} samples from {data_path}")
+        if os.path.exists(pretokenized_file):
+            self.logger = logging.getLogger(self.__class__.__name__)
+            self.logger.info(f"Loading pre-tokenized data from {pretokenized_file}")
+            self._load_pretokenized_data(pretokenized_file)
+            self.logger.info(f"Loaded {len(self.tokenized_data)} pre-tokenized samples")
+        else:
+            # 回退到原始方法
+            self.logger = logging.getLogger(self.__class__.__name__)
+            self.logger.info(f"Pre-tokenized file not found: {pretokenized_file}")
+            self.logger.info("Loading original data and computing tokenization...")
+
+            # Load data
+            self.data = self._load_data()
+            self.logger.info(f"Loaded {len(self.data)} samples from {data_path}")
+
+            # 预计算tokenization
+            self.logger.info(f"Pre-computing tokenization for {len(self.data)} samples...")
+            self._precompute_tokenization()
+            self.logger.info("Tokenization pre-computation completed!")
     
+    def _get_pretokenized_file_path(self) -> str:
+        """获取预处理文件路径"""
+        filename = os.path.basename(self.data_path).replace('.json', '.pkl')
+        return os.path.join(self.pretokenized_dir, f"tokenized_{filename}")
+
+    def _load_pretokenized_data(self, pretokenized_file: str):
+        """加载预处理的tokenization数据"""
+        with open(pretokenized_file, 'rb') as f:
+            self.tokenized_data = pickle.load(f)
+
     def _load_data(self) -> List[Dict[str, Any]]:
         """Load data from JSON file."""
         with open(self.data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
+
+    def _precompute_tokenization(self):
+        """预计算所有样本的tokenization，消除训练时的CPU瓶颈"""
+        self.tokenized_data = []
+
+        for i, sample in enumerate(self.data):
+            if i % 1000 == 0:
+                print(f"Tokenizing sample {i}/{len(self.data)}")
+
+            # 提取查询和文档
+            query = sample.get('question', '')
+            document = ' '.join(sample.get('context', []))
+
+            # 预计算tokenization
+            query_tokens = self.tokenizer(
+                query,
+                max_length=self.max_query_length,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt'
+            )
+
+            doc_tokens = self.tokenizer(
+                document,
+                max_length=self.max_length,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt'
+            )
+
+            # 存储预计算的结果
+            tokenized_sample = {
+                'query_input_ids': query_tokens['input_ids'].squeeze(0),
+                'query_attention_mask': query_tokens['attention_mask'].squeeze(0),
+                'doc_input_ids': doc_tokens['input_ids'].squeeze(0),
+                'doc_attention_mask': doc_tokens['attention_mask'].squeeze(0),
+                'original_sample': sample  # 保留原始数据用于其他处理
+            }
+
+            self.tokenized_data.append(tokenized_sample)
     
     def __len__(self) -> int:
         return len(self.data)
@@ -140,32 +210,21 @@ class HotpotQADataset(Dataset):
         return label_counts
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """Get a single sample."""
-        sample = self.data[idx]
-        
+        """Get a single sample using pre-computed tokenization."""
+        # 🚀 使用预计算的tokenization，消除CPU瓶颈
+        tokenized_sample = self.tokenized_data[idx]
+        sample = tokenized_sample['original_sample']
+
         # Extract components
-        document = sample['document']
-        query = sample['query']
         entities = sample.get('entities', [])
         relations = sample.get('relations', [])
         label = self._extract_label(sample)
-        
-        # Tokenize query and document
-        query_encoding = self.tokenizer(
-            query,
-            max_length=self.max_query_length,
-            padding='max_length',
-            truncation=True,
-            return_tensors='pt'
-        )
-        
-        doc_encoding = self.tokenizer(
-            document,
-            max_length=self.max_length,
-            padding='max_length', 
-            truncation=True,
-            return_tensors='pt'
-        )
+
+        # 直接使用预计算的tokenization结果
+        query_input_ids = tokenized_sample['query_input_ids']
+        query_attention_mask = tokenized_sample['query_attention_mask']
+        doc_input_ids = tokenized_sample['doc_input_ids']
+        doc_attention_mask = tokenized_sample['doc_attention_mask']
         
         # Note: Graph construction is now handled by GraphWriter in the model
         
@@ -202,12 +261,12 @@ class HotpotQADataset(Dataset):
                 relation_type_id = self.relation_type_map.get(relation_type_str, 0)
                 relation_labels[i] = relation_type_id
 
-        # Create the return dictionary
+        # 🚀 使用预计算的tokenization结果创建返回字典
         result = {
-            'query_input_ids': query_encoding['input_ids'].squeeze(0),
-            'query_attention_mask': query_encoding['attention_mask'].squeeze(0),
-            'doc_input_ids': doc_encoding['input_ids'].squeeze(0),
-            'doc_attention_mask': doc_encoding['attention_mask'].squeeze(0),
+            'query_input_ids': query_input_ids,
+            'query_attention_mask': query_attention_mask,
+            'doc_input_ids': doc_input_ids,
+            'doc_attention_mask': doc_attention_mask,
             'entity_spans': entity_spans,
             'entity_labels': entity_labels,
             'relation_labels': relation_labels,

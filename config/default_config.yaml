@@ -25,9 +25,9 @@ data:
 
 training:
   max_epochs: 30  # 进一步增加训练轮数
-  batch_size: 16  # 减小batch size缓解CPU瓶颈
+  batch_size: 8   # 进一步减小batch size
   learning_rate: 2e-4  # 增加学习率适应更大batch size
-  num_workers: 12  # 进一步增加数据加载进程
+  num_workers: 16  # 最大化数据加载并行度
   accelerator: "gpu"
   devices: 1
   precision: 32
