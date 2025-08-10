@@ -68,13 +68,18 @@ class GraphWriter(nn.Module):
             entities = entities_batch[b]
             relations = relations_batch[b]
 
-            # Pad entities to max_entities if needed
-            num_entities = min(len(entities), self.max_entities)
-            if num_entities == 0:
-                # Create dummy entity if no entities found
-                num_entities = 1
-                dummy_repr = sequence_output[b, 0]
-                # Ensure dummy representation has correct dimension
+            # 🔧 添加详细调试信息
+            seq_len = sequence_output.size(1)
+            print(f"🐛 GraphWriter Debug Batch {b}: seq_len={seq_len}, num_entities_in={len(entities)}")
+
+            # 🔧 创建节点特征 - 只处理有效实体
+            batch_node_features = []
+            valid_entity_mapping = {}  # 原始索引 -> 新索引的映射
+
+            # 处理空实体列表的情况
+            if not entities:
+                # 创建一个dummy实体
+                dummy_repr = sequence_output[b, 0]  # 使用[CLS] token
                 if dummy_repr.size(0) != self.hidden_size:
                     if dummy_repr.size(0) < self.hidden_size:
                         padding = torch.zeros(self.hidden_size - dummy_repr.size(0), device=device)
@@ -82,15 +87,31 @@ class GraphWriter(nn.Module):
                     else:
                         dummy_repr = dummy_repr[:self.hidden_size]
                 entities = [{'span': (0, 1), 'type': 0, 'representation': dummy_repr}]
+                print(f"  Created dummy entity for empty batch")
 
-            # Create node features
-            batch_node_features = []
-            valid_entities = 0  # 🔧 跟踪实际创建的节点数量
-
-            for i in range(num_entities):
-                entity = entities[i] if i < len(entities) else entities[0]
-
+            # 🔧 逐个处理实体，严格检查边界
+            for i, entity in enumerate(entities):
                 try:
+                    # 详细调试每个实体
+                    start_pos = entity['span'][0] if 'span' in entity and len(entity['span']) > 0 else 0
+                    end_pos = entity['span'][1] if 'span' in entity and len(entity['span']) > 1 else start_pos + 1
+                    entity_text = entity.get('text', 'N/A')[:20]
+
+                    print(f"  Entity {i}: start={start_pos}, end={end_pos}, text='{entity_text}...'")
+
+                    # 🔧 严格的边界检查
+                    if start_pos >= seq_len:
+                        print(f"    🚨 Skipping entity {i}: start_pos {start_pos} >= seq_len {seq_len}")
+                        continue
+
+                    if end_pos > seq_len:
+                        print(f"    ⚠️ Adjusting entity {i}: end_pos {end_pos} -> {seq_len}")
+                        end_pos = seq_len
+
+                    if start_pos >= end_pos:
+                        print(f"    🚨 Skipping entity {i}: invalid span ({start_pos}, {end_pos})")
+                        continue
+
                     # Text representation
                     text_repr = entity['representation']
 
@@ -98,7 +119,6 @@ class GraphWriter(nn.Module):
                     if text_repr.dim() == 0:
                         text_repr = text_repr.unsqueeze(0)
                     if text_repr.size(0) != self.hidden_size:
-                        # Pad or truncate to hidden_size
                         if text_repr.size(0) < self.hidden_size:
                             padding = torch.zeros(self.hidden_size - text_repr.size(0), device=device)
                             text_repr = torch.cat([text_repr, padding], dim=0)
@@ -110,60 +130,69 @@ class GraphWriter(nn.Module):
                     entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
                     type_repr = self.entity_type_embedding(entity_type)
 
-                    # Position embedding with additional safety checks
-                    position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
-                    # 🔧 确保position在有效范围内 (双重检查)
-                    if position >= 512:
-                        print(f"⚠️ Entity position {position} still out of range after StructureExtractor filtering")
-                        position = 511  # 强制设为最大有效位置
-                    position = max(0, min(position, 511))  # Clamp to [0, 511]
+                    # Position embedding - 使用检查后的start_pos
+                    position = max(0, min(start_pos, 511))
                     position = torch.tensor(position, device=device, dtype=torch.long)
                     pos_repr = self.position_embedding(position)
 
-                    # Combine features - ensure all have same dimension
+                    # Combine features
                     combined_repr = torch.cat([text_repr, type_repr, pos_repr], dim=0)
                     node_feature = self.node_projection(combined_repr)
+
+                    # 🔧 成功创建节点，记录映射
+                    valid_entity_mapping[i] = len(batch_node_features)
                     batch_node_features.append(node_feature)
-                    valid_entities += 1  # 🔧 成功创建节点，计数+1
+                    print(f"    ✅ Created node {len(batch_node_features)-1} for entity {i}")
 
                 except Exception as e:
-                    print(f"⚠️ Failed to create node for entity {i}: {e}")
-                    # 跳过这个实体，不创建节点
+                    print(f"    ❌ Failed to create node for entity {i}: {e}")
                     continue
 
-            # 🔧 处理节点特征和计算实际节点数
-            if batch_node_features:
-                batch_node_features = torch.stack(batch_node_features)
-                batch_node_features = self.layer_norm(batch_node_features)
-                all_node_features.append(batch_node_features)
-                # 🔧 使用实际创建的节点数量
-                actual_nodes_created = batch_node_features.size(0)
-            else:
+            # 🔧 处理节点特征 - 确保至少有一个节点
+            if not batch_node_features:
                 # 如果没有有效节点，创建一个dummy节点
-                dummy_feature = torch.zeros(1, self.hidden_size, device=device)
-                all_node_features.append(dummy_feature)
-                actual_nodes_created = 1
+                dummy_feature = torch.zeros(self.hidden_size, device=device)
+                batch_node_features.append(dummy_feature)
+                valid_entity_mapping[0] = 0  # dummy实体的映射
+                print(f"  Created dummy node for batch {b}")
 
-            # Create edges - 使用actual_nodes_created
+            # Stack节点特征
+            batch_node_features = torch.stack(batch_node_features)
+            batch_node_features = self.layer_norm(batch_node_features)
+            actual_nodes_created = batch_node_features.size(0)
+
+            print(f"  Final: created {actual_nodes_created} nodes for batch {b}")
+
+            # 添加到总列表
+            all_node_features.append(batch_node_features)
+
+            # 🔧 创建边 - 使用valid_entity_mapping确保索引正确
             batch_edge_indices = []
             batch_edge_types = []
+            valid_relations = 0
 
             for relation in relations:
                 head = int(relation['head'])
                 tail = int(relation['tail'])
                 rel_type = int(relation['type']) if isinstance(relation['type'], (int, float)) else 1
 
-                # 🔧 使用actual_nodes_created确保边索引有效
-                if head < actual_nodes_created and tail < actual_nodes_created:
-                    # Add forward edge
-                    batch_edge_indices.append([head + node_offset, tail + node_offset])
+                # 🔧 检查head和tail是否在valid_entity_mapping中
+                if head in valid_entity_mapping and tail in valid_entity_mapping:
+                    # 使用映射后的索引
+                    mapped_head = valid_entity_mapping[head]
+                    mapped_tail = valid_entity_mapping[tail]
+
+                    # 添加边（使用全局偏移）
+                    batch_edge_indices.append([mapped_head + node_offset, mapped_tail + node_offset])
                     batch_edge_types.append(rel_type)
 
-                    # Add backward edge (bidirectional)
-                    batch_edge_indices.append([tail + node_offset, head + node_offset])
+                    # 添加反向边
+                    batch_edge_indices.append([mapped_tail + node_offset, mapped_head + node_offset])
                     batch_edge_types.append(rel_type)
 
-            # Add self-loops - 使用actual_nodes_created
+                    valid_relations += 1
+
+            # 添加自环
             for i in range(actual_nodes_created):
                 batch_edge_indices.append([i + node_offset, i + node_offset])
                 batch_edge_types.append(0)  # Self-loop type
@@ -172,7 +201,9 @@ class GraphWriter(nn.Module):
                 all_edge_indices.extend(batch_edge_indices)
                 all_edge_types.extend(batch_edge_types)
 
-            # 🔧 Batch indices - 使用实际创建的节点数量
+            print(f"  Created {valid_relations} valid relations + {actual_nodes_created} self-loops")
+
+            # 🔧 创建batch_indices - 长度必须等于actual_nodes_created
             batch_indices = [b] * actual_nodes_created
             all_batch_indices.extend(batch_indices)
 
@@ -193,19 +224,29 @@ class GraphWriter(nn.Module):
 
         batch_indices = torch.tensor(all_batch_indices, device=device)
 
-        # 🔍 调试信息：验证张量形状匹配
-        if hasattr(self, '_debug_count'):
-            self._debug_count += 1
-        else:
-            self._debug_count = 1
+        # 🔍 最终验证和调试信息
+        total_nodes = node_features.size(0)
+        total_indices = batch_indices.size(0)
 
-        if self._debug_count <= 3:
-            print(f"🔧 GraphWriter Debug {self._debug_count}:")
-            print(f"  - node_features.shape: {node_features.shape}")
-            print(f"  - batch_indices.shape: {batch_indices.shape}")
-            print(f"  - Shapes match: {node_features.size(0) == batch_indices.size(0)}")
-            if node_features.size(0) != batch_indices.size(0):
-                print(f"  ❌ MISMATCH: {node_features.size(0)} nodes vs {batch_indices.size(0)} indices")
+        print(f"🔧 GraphWriter Final Summary:")
+        print(f"  - Total nodes created: {total_nodes}")
+        print(f"  - Total batch indices: {total_indices}")
+        print(f"  - Shapes match: {total_nodes == total_indices}")
+
+        if total_nodes != total_indices:
+            print(f"  ❌ CRITICAL MISMATCH: {total_nodes} nodes vs {total_indices} indices")
+            # 强制修复不匹配
+            if total_indices > total_nodes:
+                batch_indices = batch_indices[:total_nodes]
+                print(f"  🔧 Truncated batch_indices to {total_nodes}")
+            elif total_nodes > total_indices:
+                # 用最后一个batch值填充
+                last_batch = batch_indices[-1] if len(batch_indices) > 0 else 0
+                padding = torch.full((total_nodes - total_indices,), last_batch, device=device, dtype=torch.long)
+                batch_indices = torch.cat([batch_indices, padding])
+                print(f"  🔧 Padded batch_indices to {total_nodes}")
+        else:
+            print(f"  ✅ Perfect match: {total_nodes} nodes = {total_indices} indices")
 
         return node_features, edge_index, edge_type, batch_indices
 
