@@ -267,26 +267,34 @@ class GDMNet(nn.Module):
         # 🚀 Step 5.5: 持久化图记忆更新和查询 (新增)
         if self.training:
             # 🚀 训练时：使用批处理更新器更新全局图记忆
+            current_node_idx = 0
             for i, (entities, relations) in enumerate(zip(entities_batch, relations_batch)):
-                if i < updated_node_features.size(0):
-                    # 计算每个样本的节点数量
-                    num_entities = len(entities) if entities else 0
-                    if num_entities > 0:
-                        # 提取对应的节点特征
-                        start_idx = sum(len(entities_batch[j]) for j in range(i))
-                        end_idx = start_idx + num_entities
-                        sample_node_features = updated_node_features[start_idx:end_idx]
+                num_entities = len(entities) if entities else 0
+                if num_entities > 0:
+                    # 🔧 确保不超出节点特征的范围
+                    end_idx = current_node_idx + num_entities
+                    if end_idx <= updated_node_features.size(0):
+                        sample_node_features = updated_node_features[current_node_idx:end_idx]
 
                         # 添加到批处理更新器
                         self.batch_graph_updater.add_batch_sample(
                             entities, relations, sample_node_features
                         )
+                    else:
+                        print(f"⚠️ Node feature index out of range: {end_idx} > {updated_node_features.size(0)}")
+
+                    current_node_idx = end_idx
 
             # 每隔一定步数或batch结束时批量更新
-            if self.batch_graph_updater.get_batch_size() >= 4:  # 累积4个样本后批量更新
-                update_stats = self.batch_graph_updater.flush_batch()
-                if hasattr(self, '_debug_step') and self._debug_step % 1000 == 0:
-                    print(f"🔄 Graph update: +{update_stats['nodes_added']} nodes, +{update_stats['edges_added']} edges")
+            if self.batch_graph_updater.get_batch_size() >= 2:  # 🔧 减少批量大小以避免累积过多数据
+                try:
+                    update_stats = self.batch_graph_updater.flush_batch()
+                    if hasattr(self, '_debug_step') and self._debug_step % 1000 == 0:
+                        print(f"🔄 Graph update: +{update_stats['nodes_added']} nodes, +{update_stats['edges_added']} edges")
+                except Exception as e:
+                    print(f"❌ Graph update failed: {e}")
+                    # 清空批处理队列以避免重复错误
+                    self.batch_graph_updater.clear_batch()
 
         # 查询相关的全局图子图用于推理增强
         query_embedding = query_pooled[0].cpu().detach().numpy()  # 使用第一个查询

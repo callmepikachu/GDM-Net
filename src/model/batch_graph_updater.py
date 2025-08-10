@@ -58,6 +58,14 @@ class BatchGraphUpdater:
             sample_entity_counts.append(len(entities))
         
         if all_entities:
+            # 🔧 确保实体和特征数量匹配
+            if len(all_entities) != len(all_node_features):
+                print(f"⚠️ Entity-feature mismatch: {len(all_entities)} entities vs {len(all_node_features)} features")
+                # 取较小的数量以避免索引错误
+                min_count = min(len(all_entities), len(all_node_features))
+                all_entities = all_entities[:min_count]
+                all_node_features = all_node_features[:min_count]
+
             # 批量实体对齐
             all_node_features_np = np.array(all_node_features)
             global_node_ids = self._batch_entity_alignment(all_entities, all_node_features_np, stats)
@@ -67,7 +75,15 @@ class BatchGraphUpdater:
             start_idx = 0
             for count in sample_entity_counts:
                 end_idx = start_idx + count
-                sample_mapping = {i: global_node_ids[start_idx + i] for i in range(count)}
+                # 🔧 修复索引越界：确保不超出global_node_ids的范围
+                if end_idx <= len(global_node_ids):
+                    sample_mapping = {i: global_node_ids[start_idx + i] for i in range(count)}
+                else:
+                    # 如果索引超出范围，只映射可用的部分
+                    available_count = len(global_node_ids) - start_idx
+                    sample_mapping = {i: global_node_ids[start_idx + i] for i in range(min(count, available_count))}
+                    print(f"⚠️ Index mismatch: expected {count} entities, got {available_count}")
+
                 sample_mappings.append(sample_mapping)
                 start_idx = end_idx
             
