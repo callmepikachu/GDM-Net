@@ -31,10 +31,14 @@ class DocumentEncoder(nn.Module):
                 print(f"Loading BERT config from local path: {local_model_path}")
                 self.config = AutoConfig.from_pretrained(local_model_path)
 
+                # 🚀 设置最大序列长度为2048
+                self.config.max_position_embeddings = 2048
+                print(f"Set local config max_position_embeddings to {self.config.max_position_embeddings}")
+
                 # Check if weights file exists
                 if os.path.exists(local_weights_path):
                     print(f"Loading BERT weights from local path: {local_model_path}")
-                    self.bert = AutoModel.from_pretrained(local_model_path, config=self.config, local_files_only=True)
+                    self.bert = AutoModel.from_pretrained(local_model_path, config=self.config, local_files_only=True, ignore_mismatched_sizes=True)
                 else:
                     print(f"Local config found but no weights file. Creating model with local config.")
                     from transformers import BertModel
@@ -47,7 +51,13 @@ class DocumentEncoder(nn.Module):
 
                 print(f"Loading BERT model from HuggingFace: {model_name}")
                 self.config = AutoConfig.from_pretrained(model_name)
-                self.bert = AutoModel.from_pretrained(model_name, config=self.config)
+
+                # 🚀 关键修复：设置最大序列长度为2048
+                self.config.max_position_embeddings = 2048
+                print(f"Set max_position_embeddings to {self.config.max_position_embeddings}")
+
+                # 🚀 重要：需要重新初始化位置嵌入层以支持更长序列
+                self.bert = AutoModel.from_pretrained(model_name, config=self.config, ignore_mismatched_sizes=True)
 
         except Exception as e:
             print(f"Warning: Failed to load {model_name}. Using fallback model.")
