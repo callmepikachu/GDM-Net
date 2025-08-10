@@ -319,6 +319,16 @@ class GDMNet(nn.Module):
             # 拼接局部和全局节点特征
             combined_node_features = torch.cat([updated_node_features, global_node_features], dim=0)
 
+            # 🔧 关键修复：同步调整batch_indices
+            # 为全局节点创建batch_indices（使用-1表示全局节点）
+            global_batch_indices = torch.full(
+                (global_node_features.size(0),),
+                -1,  # 使用-1标记全局节点
+                dtype=batch_indices.dtype,
+                device=batch_indices.device
+            )
+            combined_batch_indices = torch.cat([batch_indices, global_batch_indices], dim=0)
+
             # 调整全局边索引以适应拼接后的节点索引
             if global_edge_index.size(1) > 0:
                 global_edge_index_adjusted = global_edge_index + updated_node_features.size(0)
@@ -331,10 +341,11 @@ class GDMNet(nn.Module):
             combined_node_features = updated_node_features
             combined_edge_index = edge_index
             combined_edge_type = edge_type
+            combined_batch_indices = batch_indices
 
         # Step 6: Multi-hop reasoning (使用组合的局部+全局图特征)
         fused_representation, path_representation, graph_representation = self.reasoning_module(
-            query_pooled, doc_pooled, combined_node_features, combined_edge_index, combined_edge_type, batch_indices
+            query_pooled, doc_pooled, combined_node_features, combined_edge_index, combined_edge_type, combined_batch_indices
         )
 
         # Step 7: NEW - Dual Memory Processing (使用推理结果)
