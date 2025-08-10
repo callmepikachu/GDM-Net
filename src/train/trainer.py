@@ -365,7 +365,8 @@ class GDMNetTrainer(pl.LightningModule):
                 tokenizer_name=self.config['model']['bert_model_name'],
                 max_length=self.config['data']['max_length'],
                 max_query_length=self.config['data']['max_query_length'],
-                num_entities=self.config['model']['num_entities']
+                num_entities=self.config['model']['num_entities'],
+                pretokenized_dir=self.config['data'].get('pretokenized_dir', '/autodl-tmp/hotpotqa-pretokenized')  # 🚀 添加预处理目录
             )
         
         return DataLoader(
@@ -387,7 +388,8 @@ class GDMNetTrainer(pl.LightningModule):
                 tokenizer_name=self.config['model']['bert_model_name'],
                 max_length=self.config['data']['max_length'],
                 max_query_length=self.config['data']['max_query_length'],
-                num_entities=self.config['model']['num_entities']
+                num_entities=self.config['model']['num_entities'],
+                pretokenized_dir=self.config['data'].get('pretokenized_dir', '/autodl-tmp/hotpotqa-pretokenized')  # 🚀 添加预处理目录
             )
         
         return DataLoader(

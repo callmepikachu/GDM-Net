@@ -19,9 +19,10 @@ model:
   relation_loss_weight: 0.5  # 增加辅助损失权重
 
 data:
-  train_path: "/root/autodl-fs/train.json"                 # 训练集路径 (90,447样本)
-  val_path: "/root/autodl-fs/dev_distractor.json"          # 验证集路径 (7,405样本)
+  train_path: "/root/autodl-fs/hotpot_train_v1.1.json"     # 训练集路径 (90,447样本)
+  val_path: "/root/autodl-fs/hotpot_dev_distractor_v1.json" # 验证集路径 (7,405样本)
   test_path: "/root/autodl-fs/dev_fullwiki.json"           # 测试集路径
+  pretokenized_dir: "/autodl-tmp/hotpotqa-pretokenized"    # 🚀 预处理缓存目录
   max_length: 2048  # 🚀 扩大到2048序列长度
   max_query_length: 256  # 🚀 相应扩大query长度
 
