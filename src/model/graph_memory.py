@@ -112,7 +112,10 @@ class GraphWriter(nn.Module):
 
                     # Position embedding with additional safety checks
                     position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
-                    # 🔧 确保position在有效范围内
+                    # 🔧 确保position在有效范围内 (双重检查)
+                    if position >= 512:
+                        print(f"⚠️ Entity position {position} still out of range after StructureExtractor filtering")
+                        position = 511  # 强制设为最大有效位置
                     position = max(0, min(position, 511))  # Clamp to [0, 511]
                     position = torch.tensor(position, device=device, dtype=torch.long)
                     pos_repr = self.position_embedding(position)

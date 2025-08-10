@@ -272,8 +272,20 @@ class StructureExtractor(nn.Module):
 
             batch_entities = []
 
+            # 🔧 获取BERT实际处理的序列长度
+            bert_seq_len = sequence_output.size(1)  # 实际的BERT序列长度
+            max_valid_pos = bert_seq_len - 1  # 最大有效位置
+
             if doc and doc.ents:
+                valid_entities = 0
+                skipped_entities = 0
+
                 for i, ent in enumerate(doc.ents):
+                    # 🔧 首先检查实体位置是否在BERT序列范围内
+                    if ent.start >= bert_seq_len:
+                        skipped_entities += 1
+                        continue  # 完全超出范围，跳过
+
                     # 获取SpaCy的实体向量 (冻结特征)
                     if hasattr(ent, 'vector') and ent.vector.shape[0] > 0:
                         spacy_vector = torch.tensor(ent.vector, dtype=torch.float32, device=device)
@@ -289,26 +301,35 @@ class StructureExtractor(nn.Module):
                         spacy_label = ent.label_
                         custom_type = self.spacy_to_custom.get(spacy_label, 7)  # 默认为MISC
 
-                        # 🔧 检查span边界，确保不超出BERT序列长度
-                        max_seq_len = 512  # BERT最大序列长度
-                        start_pos = min(ent.start, max_seq_len - 1)
-                        end_pos = min(ent.end, max_seq_len)
+                        # 🔧 修正span边界以适应BERT序列长度
+                        start_pos = min(ent.start, max_valid_pos)
+                        end_pos = min(ent.end, bert_seq_len)
 
-                        # 确保start < end
+                        # 确保start < end且都在有效范围内
                         if start_pos >= end_pos:
-                            end_pos = start_pos + 1
+                            end_pos = min(start_pos + 1, bert_seq_len)
 
-                        batch_entities.append({
-                            'span': (start_pos, end_pos),
-                            'type': custom_type,
-                            'representation': entity_repr,
-                            'text': ent.text,
-                            'spacy_label': spacy_label
-                        })
+                        # 如果修正后的位置仍然有效，添加实体
+                        if start_pos < bert_seq_len and end_pos <= bert_seq_len:
+                            batch_entities.append({
+                                'span': (start_pos, end_pos),
+                                'type': custom_type,
+                                'representation': entity_repr,
+                                'text': ent.text,
+                                'spacy_label': spacy_label
+                            })
+                            valid_entities += 1
+                        else:
+                            skipped_entities += 1
 
                     except Exception as e:
                         print(f"❌ Failed to process entity '{ent.text}': {e}")
+                        skipped_entities += 1
                         continue
+
+                # 🔍 调试信息：显示实体过滤结果
+                if skipped_entities > 0:
+                    print(f"🔧 Batch {b}: kept {valid_entities} entities, skipped {skipped_entities} out-of-range entities")
 
             entities_batch.append(batch_entities)
 
@@ -346,7 +367,7 @@ class StructureExtractor(nn.Module):
         total_entities = sum(len(batch) for batch in entities_batch)
         total_relations = sum(len(batch) for batch in relations_batch)
         if total_entities > 0 or total_relations > 0:
-            print(f"✅ StructureExtractor: {total_entities} entities, {total_relations} relations")
+            print(f"✅ StructureExtractor: {total_entities} entities, {total_relations} relations (BERT seq_len: {sequence_output.size(1)})")
 
         # 生成entity_logits用于损失计算
         entity_logits = torch.zeros(batch_size, seq_len, self.num_entity_types, device=device)
