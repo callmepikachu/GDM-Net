@@ -97,6 +97,19 @@ class PathFinder(nn.Module):
 
         for b in range(batch_size):
             # Get nodes for this batch (使用采样后的batch_indices)
+            # 🔧 安全检查：确保working_batch_indices长度与node_proj匹配
+            if working_batch_indices.size(0) != node_proj.size(0):
+                print(f"⚠️ PathFinder: batch_indices size {working_batch_indices.size(0)} != node_proj size {node_proj.size(0)}")
+                # 调整working_batch_indices长度
+                if working_batch_indices.size(0) > node_proj.size(0):
+                    working_batch_indices = working_batch_indices[:node_proj.size(0)]
+                else:
+                    # 如果太短，用最后一个值填充
+                    last_batch = working_batch_indices[-1] if working_batch_indices.size(0) > 0 else 0
+                    padding_size = node_proj.size(0) - working_batch_indices.size(0)
+                    padding = torch.full((padding_size,), last_batch, device=working_batch_indices.device, dtype=working_batch_indices.dtype)
+                    working_batch_indices = torch.cat([working_batch_indices, padding], dim=0)
+
             batch_mask = working_batch_indices == b
             batch_nodes = node_proj[batch_mask]  # [num_nodes_b, hidden_size]
             batch_node_indices = torch.where(batch_mask)[0]
@@ -282,6 +295,19 @@ class GraphReader(nn.Module):
 
         for b in range(batch_size):
             # Get nodes for this batch
+            # 🔧 安全检查：确保batch_indices长度与node_features匹配
+            if batch_indices.size(0) != node_features.size(0):
+                print(f"⚠️ GraphReader: batch_indices size {batch_indices.size(0)} != node_features size {node_features.size(0)}")
+                # 调整batch_indices长度
+                if batch_indices.size(0) > node_features.size(0):
+                    batch_indices = batch_indices[:node_features.size(0)]
+                else:
+                    # 如果batch_indices太短，用最后一个值填充
+                    last_batch = batch_indices[-1] if batch_indices.size(0) > 0 else 0
+                    padding_size = node_features.size(0) - batch_indices.size(0)
+                    padding = torch.full((padding_size,), last_batch, device=batch_indices.device, dtype=batch_indices.dtype)
+                    batch_indices = torch.cat([batch_indices, padding], dim=0)
+
             batch_mask = batch_indices == b
             batch_nodes = node_features[batch_mask]  # [num_nodes_b, hidden_size]
 

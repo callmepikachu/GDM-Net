@@ -107,9 +107,10 @@ class GraphWriter(nn.Module):
                 entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
                 type_repr = self.entity_type_embedding(entity_type)
 
-                # Position embedding
+                # Position embedding with additional safety checks
                 position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
-                position = min(position, 511)  # Clamp to max position
+                # 🔧 确保position在有效范围内
+                position = max(0, min(position, 511))  # Clamp to [0, 511]
                 position = torch.tensor(position, device=device, dtype=torch.long)
                 pos_repr = self.position_embedding(position)
 

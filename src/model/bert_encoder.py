@@ -289,8 +289,17 @@ class StructureExtractor(nn.Module):
                         spacy_label = ent.label_
                         custom_type = self.spacy_to_custom.get(spacy_label, 7)  # 默认为MISC
 
+                        # 🔧 检查span边界，确保不超出BERT序列长度
+                        max_seq_len = 512  # BERT最大序列长度
+                        start_pos = min(ent.start, max_seq_len - 1)
+                        end_pos = min(ent.end, max_seq_len)
+
+                        # 确保start < end
+                        if start_pos >= end_pos:
+                            end_pos = start_pos + 1
+
                         batch_entities.append({
-                            'span': (ent.start, ent.end),
+                            'span': (start_pos, end_pos),
                             'type': custom_type,
                             'representation': entity_repr,
                             'text': ent.text,
