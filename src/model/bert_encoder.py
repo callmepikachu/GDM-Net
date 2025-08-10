@@ -272,10 +272,20 @@ class StructureExtractor(nn.Module):
         entities_batch = []
         relations_batch = []
 
+        # 🔍 SpaCy采样计数器
+        if not hasattr(self, '_spacy_sample_count'):
+            self._spacy_sample_count = 0
+
         for b, text in enumerate(input_texts):
             # 🔒 使用冻结的SpaCy模型进行NER (不参与梯度计算)
             try:
                 doc = self.nlp(text)
+
+                # 🔍 采样SpaCy输入输出（前5个样本）
+                if self._spacy_sample_count < 5:
+                    self._log_spacy_sample(text, doc, self._spacy_sample_count)
+                    self._spacy_sample_count += 1
+
             except Exception as e:
                 print(f"❌ SpaCy processing failed for batch {b}: {e}")
                 doc = None
@@ -400,6 +410,46 @@ class StructureExtractor(nn.Module):
                 relation_logits[b, r, rel_type] = 1.0
 
         return entity_logits, relation_logits, entities_batch, relations_batch
+
+    def _log_spacy_sample(self, input_text: str, doc, sample_idx: int):
+        """记录SpaCy输入输出样本到文件"""
+        try:
+            with open("spacy_sample.txt", "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"SpaCy Sample {sample_idx + 1}\n")
+                f.write(f"{'='*80}\n")
+
+                # 输入文本
+                f.write(f"INPUT TEXT (length: {len(input_text)}):\n")
+                f.write(f"{input_text[:500]}{'...' if len(input_text) > 500 else ''}\n\n")
+
+                if doc:
+                    # 实体输出
+                    f.write(f"ENTITIES FOUND ({len(doc.ents)}):\n")
+                    for i, ent in enumerate(doc.ents):
+                        f.write(f"  {i+1}. '{ent.text}' [{ent.label_}] (start:{ent.start}, end:{ent.end})\n")
+
+                    # 句子分割
+                    f.write(f"\nSENTENCES ({len(list(doc.sents))}):\n")
+                    for i, sent in enumerate(doc.sents):
+                        if i < 3:  # 只显示前3个句子
+                            f.write(f"  {i+1}. {sent.text[:100]}{'...' if len(sent.text) > 100 else ''}\n")
+
+                    # Token统计
+                    f.write(f"\nTOKEN COUNT: {len(doc)}\n")
+
+                    # 词性标注样本（前10个token）
+                    f.write(f"POS TAGS (first 10 tokens):\n")
+                    for i, token in enumerate(doc[:10]):
+                        f.write(f"  {token.text} -> {token.pos_}\n")
+
+                else:
+                    f.write("SpaCy processing failed for this text.\n")
+
+                f.write(f"\n")
+
+        except Exception as e:
+            print(f"❌ Failed to log SpaCy sample: {e}")
 
     def _fallback_extraction(self, sequence_output, attention_mask, entity_spans):
         """回退到基于BERT的实体关系提取（保持向后兼容）"""
