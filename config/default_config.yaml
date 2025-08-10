@@ -22,19 +22,19 @@ data:
   train_path: "/root/autodl-fs/train.json"                 # 训练集路径 (90,447样本)
   val_path: "/root/autodl-fs/dev_distractor.json"          # 验证集路径 (7,405样本)
   test_path: "/root/autodl-fs/dev_fullwiki.json"           # 测试集路径
-  max_length: 512  # 完整序列长度
-  max_query_length: 64
+  max_length: 2048  # 🚀 扩大到2048序列长度
+  max_query_length: 256  # 🚀 相应扩大query长度
 
 training:
   max_epochs: 30  # 进一步增加训练轮数
-  batch_size: 8   # 进一步减小batch size
+  batch_size: 4   # 🚀 减小batch size适应2048序列长度
   learning_rate: 1e-4  # 调整学习率平衡收敛速度和稳定性
   num_workers: 16  # 最大化数据加载并行度
   accelerator: "gpu"
   devices: 1
   precision: 32
   gradient_clip_val: 0.5  # 更严格的梯度裁剪
-  accumulate_grad_batches: 1  # 减少梯度累积，因为batch size已增加
+  accumulate_grad_batches: 2  # 🚀 增加梯度累积保持有效batch size (4*2=8)
   val_check_interval: 0.5
   log_every_n_steps: 10  # 进一步减少日志频率
   checkpoint_dir: "checkpoints"

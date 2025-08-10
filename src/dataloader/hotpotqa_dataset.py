@@ -32,8 +32,8 @@ class HotpotQADataset(Dataset):
         self,
         data_path: str,
         tokenizer_name: str = "bert-base-uncased",
-        max_length: int = 512,
-        max_query_length: int = 64,
+        max_length: int = 2048,  # 🚀 扩大到2048
+        max_query_length: int = 256,  # 🚀 相应扩大query长度
         num_entities: int = 9,
         num_relations: int = 10,
         pretokenized_dir: str = "/root/autodl-tmp/hotpotqa-pretokenized"

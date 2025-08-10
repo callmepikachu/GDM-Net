@@ -60,7 +60,7 @@ class DocumentEncoder(nn.Module):
                 num_hidden_layers=6,  # Smaller model for fallback
                 num_attention_heads=12,
                 intermediate_size=hidden_size * 4,
-                max_position_embeddings=512
+                max_position_embeddings=2048  # 🚀 扩大到2048
             )
             self.bert = BertModel(self.config)
         
@@ -273,7 +273,7 @@ class StructureExtractor(nn.Module):
             batch_entities = []
 
             # 🔧 获取BERT实际处理的序列长度
-            bert_seq_len = sequence_output.size(1)  # 实际的BERT序列长度
+            bert_seq_len = sequence_output.size(1)  # 实际的BERT序列长度 (现在最大2048)
             max_valid_pos = bert_seq_len - 1  # 最大有效位置
 
             if doc and doc.ents:
@@ -367,7 +367,7 @@ class StructureExtractor(nn.Module):
         total_entities = sum(len(batch) for batch in entities_batch)
         total_relations = sum(len(batch) for batch in relations_batch)
         if total_entities > 0 or total_relations > 0:
-            print(f"✅ StructureExtractor: {total_entities} entities, {total_relations} relations (BERT seq_len: {sequence_output.size(1)})")
+            print(f"✅ StructureExtractor: {total_entities} entities, {total_relations} relations (BERT seq_len: {sequence_output.size(1)}/2048)")
 
         # 生成entity_logits用于损失计算
         entity_logits = torch.zeros(batch_size, seq_len, self.num_entity_types, device=device)

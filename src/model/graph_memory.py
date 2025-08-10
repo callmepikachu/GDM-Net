@@ -26,8 +26,8 @@ class GraphWriter(nn.Module):
         # Entity type embeddings
         self.entity_type_embedding = nn.Embedding(num_entity_types, hidden_size)
 
-        # Position encoding
-        self.position_embedding = nn.Embedding(512, hidden_size)  # Max sequence length
+        # Position encoding - 🚀 扩大到2048
+        self.position_embedding = nn.Embedding(2048, hidden_size)  # Max sequence length 2048
 
         # Node feature projection
         self.node_projection = nn.Linear(hidden_size * 3, hidden_size)  # text + type + position
@@ -120,8 +120,8 @@ class GraphWriter(nn.Module):
                     entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
                     type_repr = self.entity_type_embedding(entity_type)
 
-                    # Position embedding - 使用检查后的start_pos
-                    position = max(0, min(start_pos, 511))
+                    # Position embedding - 使用检查后的start_pos (扩大到2047)
+                    position = max(0, min(start_pos, 2047))  # 🚀 扩大位置嵌入范围
                     position = torch.tensor(position, device=device, dtype=torch.long)
                     pos_repr = self.position_embedding(position)
 
