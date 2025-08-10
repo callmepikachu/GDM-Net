@@ -259,6 +259,19 @@ class GDMNet(nn.Module):
             entities_batch, relations_batch, doc_sequence
         )
 
+        # 🔍 调试信息：检查图构建结果
+        if hasattr(self, '_debug_graph_count'):
+            self._debug_graph_count += 1
+        else:
+            self._debug_graph_count = 1
+
+        if self._debug_graph_count <= 3:  # 只打印前3次的调试信息
+            print(f"🔍 Graph Construction Debug {self._debug_graph_count}:")
+            print(f"  - node_features shape: {node_features.shape}")
+            print(f"  - batch_indices length: {len(batch_indices)}")
+            print(f"  - edge_index shape: {edge_index.shape}")
+            print(f"  - Shapes match: {node_features.size(0) == len(batch_indices)}")
+
         # Step 5: Graph memory processing
         updated_node_features = self.graph_memory(
             node_features, edge_index, edge_type, batch_indices

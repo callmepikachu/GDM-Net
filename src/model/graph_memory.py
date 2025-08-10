@@ -85,43 +85,58 @@ class GraphWriter(nn.Module):
 
             # Create node features
             batch_node_features = []
+            valid_entities = 0  # 🔧 跟踪实际创建的节点数量
+
             for i in range(num_entities):
                 entity = entities[i] if i < len(entities) else entities[0]
 
-                # Text representation
-                text_repr = entity['representation']
+                try:
+                    # Text representation
+                    text_repr = entity['representation']
 
-                # Ensure text_repr is the correct size
-                if text_repr.dim() == 0:
-                    text_repr = text_repr.unsqueeze(0)
-                if text_repr.size(0) != self.hidden_size:
-                    # Pad or truncate to hidden_size
-                    if text_repr.size(0) < self.hidden_size:
-                        padding = torch.zeros(self.hidden_size - text_repr.size(0), device=device)
-                        text_repr = torch.cat([text_repr, padding], dim=0)
-                    else:
-                        text_repr = text_repr[:self.hidden_size]
+                    # Ensure text_repr is the correct size
+                    if text_repr.dim() == 0:
+                        text_repr = text_repr.unsqueeze(0)
+                    if text_repr.size(0) != self.hidden_size:
+                        # Pad or truncate to hidden_size
+                        if text_repr.size(0) < self.hidden_size:
+                            padding = torch.zeros(self.hidden_size - text_repr.size(0), device=device)
+                            text_repr = torch.cat([text_repr, padding], dim=0)
+                        else:
+                            text_repr = text_repr[:self.hidden_size]
 
-                # Entity type embedding
-                entity_type = int(entity['type']) if isinstance(entity['type'], (int, float)) else 0
-                entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
-                type_repr = self.entity_type_embedding(entity_type)
+                    # Entity type embedding
+                    entity_type = int(entity['type']) if isinstance(entity['type'], (int, float)) else 0
+                    entity_type = torch.tensor(entity_type, device=device, dtype=torch.long)
+                    type_repr = self.entity_type_embedding(entity_type)
 
-                # Position embedding with additional safety checks
-                position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
-                # 🔧 确保position在有效范围内
-                position = max(0, min(position, 511))  # Clamp to [0, 511]
-                position = torch.tensor(position, device=device, dtype=torch.long)
-                pos_repr = self.position_embedding(position)
+                    # Position embedding with additional safety checks
+                    position = int(entity['span'][0]) if len(entity['span']) > 0 else 0
+                    # 🔧 确保position在有效范围内
+                    position = max(0, min(position, 511))  # Clamp to [0, 511]
+                    position = torch.tensor(position, device=device, dtype=torch.long)
+                    pos_repr = self.position_embedding(position)
 
-                # Combine features - ensure all have same dimension
-                combined_repr = torch.cat([text_repr, type_repr, pos_repr], dim=0)
-                node_feature = self.node_projection(combined_repr)
-                batch_node_features.append(node_feature)
+                    # Combine features - ensure all have same dimension
+                    combined_repr = torch.cat([text_repr, type_repr, pos_repr], dim=0)
+                    node_feature = self.node_projection(combined_repr)
+                    batch_node_features.append(node_feature)
+                    valid_entities += 1  # 🔧 成功创建节点，计数+1
 
-            batch_node_features = torch.stack(batch_node_features)
-            batch_node_features = self.layer_norm(batch_node_features)
-            all_node_features.append(batch_node_features)
+                except Exception as e:
+                    print(f"⚠️ Failed to create node for entity {i}: {e}")
+                    # 跳过这个实体，不创建节点
+                    continue
+
+            if batch_node_features:
+                batch_node_features = torch.stack(batch_node_features)
+                batch_node_features = self.layer_norm(batch_node_features)
+                all_node_features.append(batch_node_features)
+            else:
+                # 如果没有有效节点，创建一个dummy节点
+                dummy_feature = torch.zeros(1, self.hidden_size, device=device)
+                all_node_features.append(dummy_feature)
+                valid_entities = 1
 
             # Create edges
             batch_edge_indices = []
@@ -132,7 +147,8 @@ class GraphWriter(nn.Module):
                 tail = int(relation['tail'])
                 rel_type = int(relation['type']) if isinstance(relation['type'], (int, float)) else 1
 
-                if head < num_entities and tail < num_entities:
+                # 🔧 使用valid_entities而不是num_entities
+                if head < valid_entities and tail < valid_entities:
                     # Add forward edge
                     batch_edge_indices.append([head + node_offset, tail + node_offset])
                     batch_edge_types.append(rel_type)
@@ -141,8 +157,8 @@ class GraphWriter(nn.Module):
                     batch_edge_indices.append([tail + node_offset, head + node_offset])
                     batch_edge_types.append(rel_type)
 
-            # Add self-loops
-            for i in range(num_entities):
+            # Add self-loops - 使用valid_entities
+            for i in range(valid_entities):
                 batch_edge_indices.append([i + node_offset, i + node_offset])
                 batch_edge_types.append(0)  # Self-loop type
 
@@ -150,11 +166,11 @@ class GraphWriter(nn.Module):
                 all_edge_indices.extend(batch_edge_indices)
                 all_edge_types.extend(batch_edge_types)
 
-            # Batch indices
-            batch_indices = [b] * num_entities
+            # 🔧 Batch indices - 使用实际创建的节点数量
+            batch_indices = [b] * valid_entities
             all_batch_indices.extend(batch_indices)
 
-            node_offset += num_entities
+            node_offset += valid_entities
 
         # Convert to tensors
         if all_node_features:
