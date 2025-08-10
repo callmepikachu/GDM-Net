@@ -76,25 +76,7 @@ class GDMNetTrainer(pl.LightningModule):
     def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """Forward pass."""
 
-        # 🔍 调试信息：检查batch内容
-        if hasattr(self, '_debug_batch_count'):
-            self._debug_batch_count += 1
-        else:
-            self._debug_batch_count = 1
 
-        if self._debug_batch_count <= 3:  # 只打印前3个batch的调试信息
-            print(f"🔍 Trainer Debug - Batch {self._debug_batch_count}:")
-            print(f"  - Batch keys: {list(batch.keys())}")
-            print(f"  - 'doc_text' in batch: {'doc_text' in batch}")
-            if 'doc_text' in batch:
-                doc_text = batch['doc_text']
-                print(f"  - doc_text type: {type(doc_text)}")
-                if isinstance(doc_text, (list, tuple)):
-                    print(f"  - doc_text length: {len(doc_text)}")
-                    if len(doc_text) > 0:
-                        print(f"  - first doc_text: {str(doc_text[0])[:100]}...")
-                else:
-                    print(f"  - doc_text value: {str(doc_text)[:100]}...")
 
         return self.model(
             query_input_ids=batch['query_input_ids'],
