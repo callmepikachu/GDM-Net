@@ -22,6 +22,10 @@ class GDMNetDataCollator:
         labels = [item['label'] for item in batch]
         metadata = [item['metadata'] for item in batch]
 
+        # 🚀 提取原始文本字段用于SpaCy处理
+        query_texts = [item.get('query_text', '') for item in batch]
+        doc_texts = [item.get('doc_text', '') for item in batch]
+
         # Stack tensors
         batch_dict = {
             'query_input_ids': torch.stack(query_input_ids),
@@ -30,7 +34,10 @@ class GDMNetDataCollator:
             'doc_attention_mask': torch.stack(doc_attention_mask),
             'entity_spans': torch.stack(entity_spans),
             'labels': torch.stack(labels),
-            'metadata': metadata
+            'metadata': metadata,
+            # 🚀 添加原始文本字段
+            'query_text': query_texts,
+            'doc_text': doc_texts
         }
 
         # Add optional auxiliary labels if available
