@@ -236,6 +236,16 @@ class GDMNet(nn.Module):
         # 提取原始文本用于SpaCy处理
         doc_texts = kwargs.get('doc_texts', None)
 
+        # 🔍 调试信息：检查文本传递
+        print(f"🔍 GDMNet Debug:")
+        print(f"  - doc_texts received: {doc_texts is not None}")
+        print(f"  - doc_texts type: {type(doc_texts)}")
+        if doc_texts is not None:
+            print(f"  - doc_texts length: {len(doc_texts)}")
+            if len(doc_texts) > 0:
+                print(f"  - first doc_text type: {type(doc_texts[0])}")
+                print(f"  - first doc_text preview: {str(doc_texts[0])[:100]}...")
+
         entity_logits, relation_logits, entities_batch, relations_batch = self.structure_extractor(
             doc_sequence, doc_attention_mask, entity_spans, input_texts=doc_texts
         )

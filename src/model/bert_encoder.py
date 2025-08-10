@@ -253,8 +253,16 @@ class StructureExtractor(nn.Module):
         batch_size, seq_len, hidden_size = sequence_output.shape
         device = sequence_output.device
 
+        # 🔍 调试信息：检查输入
+        print(f"🔍 StructureExtractor Debug:")
+        print(f"  - input_texts provided: {input_texts is not None}")
+        print(f"  - input_texts length: {len(input_texts) if input_texts else 0}")
+        if input_texts:
+            print(f"  - first text sample: {input_texts[0][:100]}..." if len(input_texts[0]) > 100 else f"  - first text sample: {input_texts[0]}")
+
         # 如果没有提供原始文本，回退到基于span的方法
         if input_texts is None:
+            print("⚠️ No input_texts provided, using fallback extraction")
             return self._fallback_extraction(sequence_output, attention_mask, entity_spans)
 
         # 🚀 使用SpaCy进行实体关系提取
@@ -262,59 +270,124 @@ class StructureExtractor(nn.Module):
         relations_batch = []
 
         for b, text in enumerate(input_texts):
+            # 🔍 调试信息：处理每个文本
+            print(f"🔍 Processing batch {b}:")
+            print(f"  - text length: {len(text)}")
+            print(f"  - text preview: {text[:200]}..." if len(text) > 200 else f"  - text: {text}")
+
             # 🔒 使用冻结的SpaCy模型进行NER (不参与梯度计算)
-            doc = self.nlp(text)
+            try:
+                doc = self.nlp(text)
+                print(f"  - SpaCy processed successfully")
+                print(f"  - SpaCy found {len(doc.ents)} raw entities")
+
+                # 🔍 显示SpaCy找到的原始实体
+                if doc.ents:
+                    print(f"  - Raw entities: {[(ent.text, ent.label_) for ent in doc.ents[:5]]}")
+                else:
+                    print(f"  - No entities found by SpaCy")
+
+            except Exception as e:
+                print(f"❌ SpaCy processing failed: {e}")
+                doc = None
+
             batch_entities = []
 
-            for ent in doc.ents:
-                # 获取SpaCy的实体向量 (冻结特征)
-                if hasattr(ent, 'vector') and ent.vector.shape[0] > 0:
-                    spacy_vector = torch.tensor(ent.vector, dtype=torch.float32, device=device)
-                else:
-                    # 如果没有向量，使用零向量
-                    spacy_vector = torch.zeros(96, device=device)
+            if doc and doc.ents:
+                for i, ent in enumerate(doc.ents):
+                    # 🔍 调试每个实体的处理
+                    print(f"    - Processing entity {i+1}: '{ent.text}' ({ent.label_})")
 
-                # 🔥 通过可训练的适配器映射到我们的隐藏空间
-                entity_repr = self.entity_adapter(spacy_vector)
+                    # 获取SpaCy的实体向量 (冻结特征)
+                    if hasattr(ent, 'vector') and ent.vector.shape[0] > 0:
+                        spacy_vector = torch.tensor(ent.vector, dtype=torch.float32, device=device)
+                        print(f"      - Using SpaCy vector: shape {spacy_vector.shape}")
+                    else:
+                        # 如果没有向量，使用零向量
+                        spacy_vector = torch.zeros(96, device=device)
+                        print(f"      - Using zero vector: shape {spacy_vector.shape}")
 
-                # 映射SpaCy实体类型到我们的类型
-                spacy_label = ent.label_
-                custom_type = self.spacy_to_custom.get(spacy_label, 7)  # 默认为MISC
+                    try:
+                        # 🔥 通过可训练的适配器映射到我们的隐藏空间
+                        entity_repr = self.entity_adapter(spacy_vector)
+                        print(f"      - Entity adapter output: shape {entity_repr.shape}")
 
-                batch_entities.append({
-                    'span': (ent.start, ent.end),
-                    'type': custom_type,
-                    'representation': entity_repr,
-                    'text': ent.text,
-                    'spacy_label': spacy_label
-                })
+                        # 映射SpaCy实体类型到我们的类型
+                        spacy_label = ent.label_
+                        custom_type = self.spacy_to_custom.get(spacy_label, 7)  # 默认为MISC
+                        print(f"      - Mapped {spacy_label} -> {custom_type}")
+
+                        batch_entities.append({
+                            'span': (ent.start, ent.end),
+                            'type': custom_type,
+                            'representation': entity_repr,
+                            'text': ent.text,
+                            'spacy_label': spacy_label
+                        })
+                        print(f"      - Successfully added entity")
+
+                    except Exception as e:
+                        print(f"      ❌ Failed to process entity: {e}")
+                        continue
 
             entities_batch.append(batch_entities)
+
+            # 🔍 批次汇总调试信息
+            print(f"  - Final batch {b} entities: {len(batch_entities)}")
+            if batch_entities:
+                print(f"  - Entity types: {[ent['spacy_label'] for ent in batch_entities]}")
+                print(f"  - Entity texts: {[ent['text'] for ent in batch_entities]}")
 
             # 关系提取：对实体对进行分类
             batch_relations = []
             entities = batch_entities
 
+            print(f"  - Starting relation extraction with {len(entities)} entities")
+
             if len(entities) > 1:
+                relations_checked = 0
+                relations_found = 0
+
                 for i in range(len(entities)):
                     for j in range(i+1, len(entities)):
+                        relations_checked += 1
                         head_repr = entities[i]['representation']
                         tail_repr = entities[j]['representation']
 
-                        # 🔥 通过可训练的关系适配器
-                        pair_repr = torch.cat([head_repr, tail_repr], dim=0)
-                        rel_logits = self.relation_adapter(pair_repr.unsqueeze(0))
-                        rel_type = rel_logits.argmax(dim=-1).item()
+                        try:
+                            # 🔥 通过可训练的关系适配器
+                            pair_repr = torch.cat([head_repr, tail_repr], dim=0)
+                            rel_logits = self.relation_adapter(pair_repr.unsqueeze(0))
+                            rel_type = rel_logits.argmax(dim=-1).item()
+                            confidence = torch.softmax(rel_logits, dim=-1).max().item()
 
-                        if rel_type > 0:  # 非零关系
-                            batch_relations.append({
-                                'head': i,
-                                'tail': j,
-                                'type': int(rel_type),
-                                'confidence': torch.softmax(rel_logits, dim=-1).max().item()
-                            })
+                            if rel_type > 0:  # 非零关系
+                                relations_found += 1
+                                batch_relations.append({
+                                    'head': i,
+                                    'tail': j,
+                                    'type': int(rel_type),
+                                    'confidence': confidence
+                                })
+                                print(f"    - Found relation: {entities[i]['text']} --[{rel_type}]--> {entities[j]['text']} (conf: {confidence:.3f})")
+
+                        except Exception as e:
+                            print(f"    ❌ Relation extraction failed for pair ({i},{j}): {e}")
+                            continue
+
+                print(f"  - Relation extraction: checked {relations_checked} pairs, found {relations_found} relations")
 
             relations_batch.append(batch_relations)
+            print(f"  - Final batch {b} relations: {len(batch_relations)}")
+
+        # 🔍 总体调试信息
+        total_entities = sum(len(batch) for batch in entities_batch)
+        total_relations = sum(len(batch) for batch in relations_batch)
+        print(f"🔍 StructureExtractor Summary:")
+        print(f"  - Total entities extracted: {total_entities}")
+        print(f"  - Total relations extracted: {total_relations}")
+        print(f"  - Entities per batch: {[len(batch) for batch in entities_batch]}")
+        print(f"  - Relations per batch: {[len(batch) for batch in relations_batch]}")
 
         # 生成entity_logits用于损失计算
         entity_logits = torch.zeros(batch_size, seq_len, self.num_entity_types, device=device)
