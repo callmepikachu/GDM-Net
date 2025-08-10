@@ -131,17 +131,20 @@ class GraphWriter(nn.Module):
                     # 跳过这个实体，不创建节点
                     continue
 
+            # 🔧 处理节点特征和计算实际节点数
             if batch_node_features:
                 batch_node_features = torch.stack(batch_node_features)
                 batch_node_features = self.layer_norm(batch_node_features)
                 all_node_features.append(batch_node_features)
+                # 🔧 使用实际创建的节点数量
+                actual_nodes_created = batch_node_features.size(0)
             else:
                 # 如果没有有效节点，创建一个dummy节点
                 dummy_feature = torch.zeros(1, self.hidden_size, device=device)
                 all_node_features.append(dummy_feature)
-                valid_entities = 1
+                actual_nodes_created = 1
 
-            # Create edges
+            # Create edges - 使用actual_nodes_created
             batch_edge_indices = []
             batch_edge_types = []
 
@@ -150,8 +153,8 @@ class GraphWriter(nn.Module):
                 tail = int(relation['tail'])
                 rel_type = int(relation['type']) if isinstance(relation['type'], (int, float)) else 1
 
-                # 🔧 使用valid_entities而不是num_entities
-                if head < valid_entities and tail < valid_entities:
+                # 🔧 使用actual_nodes_created确保边索引有效
+                if head < actual_nodes_created and tail < actual_nodes_created:
                     # Add forward edge
                     batch_edge_indices.append([head + node_offset, tail + node_offset])
                     batch_edge_types.append(rel_type)
@@ -160,8 +163,8 @@ class GraphWriter(nn.Module):
                     batch_edge_indices.append([tail + node_offset, head + node_offset])
                     batch_edge_types.append(rel_type)
 
-            # Add self-loops - 使用valid_entities
-            for i in range(valid_entities):
+            # Add self-loops - 使用actual_nodes_created
+            for i in range(actual_nodes_created):
                 batch_edge_indices.append([i + node_offset, i + node_offset])
                 batch_edge_types.append(0)  # Self-loop type
 
@@ -170,10 +173,10 @@ class GraphWriter(nn.Module):
                 all_edge_types.extend(batch_edge_types)
 
             # 🔧 Batch indices - 使用实际创建的节点数量
-            batch_indices = [b] * valid_entities
+            batch_indices = [b] * actual_nodes_created
             all_batch_indices.extend(batch_indices)
 
-            node_offset += valid_entities
+            node_offset += actual_nodes_created
 
         # Convert to tensors
         if all_node_features:
@@ -189,6 +192,20 @@ class GraphWriter(nn.Module):
             edge_type = torch.zeros(0, dtype=torch.long, device=device)
 
         batch_indices = torch.tensor(all_batch_indices, device=device)
+
+        # 🔍 调试信息：验证张量形状匹配
+        if hasattr(self, '_debug_count'):
+            self._debug_count += 1
+        else:
+            self._debug_count = 1
+
+        if self._debug_count <= 3:
+            print(f"🔧 GraphWriter Debug {self._debug_count}:")
+            print(f"  - node_features.shape: {node_features.shape}")
+            print(f"  - batch_indices.shape: {batch_indices.shape}")
+            print(f"  - Shapes match: {node_features.size(0) == batch_indices.size(0)}")
+            if node_features.size(0) != batch_indices.size(0):
+                print(f"  ❌ MISMATCH: {node_features.size(0)} nodes vs {batch_indices.size(0)} indices")
 
         return node_features, edge_index, edge_type, batch_indices
 
