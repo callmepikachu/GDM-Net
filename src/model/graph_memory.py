@@ -68,13 +68,10 @@ class GraphWriter(nn.Module):
             entities = entities_batch[b]
             relations = relations_batch[b]
 
-            # 🔧 添加详细调试信息
-            seq_len = sequence_output.size(1)
-            print(f"🐛 GraphWriter Debug Batch {b}: seq_len={seq_len}, num_entities_in={len(entities)}")
-
             # 🔧 创建节点特征 - 只处理有效实体
             batch_node_features = []
             valid_entity_mapping = {}  # 原始索引 -> 新索引的映射
+            seq_len = sequence_output.size(1)
 
             # 处理空实体列表的情况
             if not entities:
@@ -87,30 +84,23 @@ class GraphWriter(nn.Module):
                     else:
                         dummy_repr = dummy_repr[:self.hidden_size]
                 entities = [{'span': (0, 1), 'type': 0, 'representation': dummy_repr}]
-                print(f"  Created dummy entity for empty batch")
 
             # 🔧 逐个处理实体，严格检查边界
             for i, entity in enumerate(entities):
                 try:
-                    # 详细调试每个实体
+                    # 获取实体位置信息
                     start_pos = entity['span'][0] if 'span' in entity and len(entity['span']) > 0 else 0
                     end_pos = entity['span'][1] if 'span' in entity and len(entity['span']) > 1 else start_pos + 1
-                    entity_text = entity.get('text', 'N/A')[:20]
-
-                    print(f"  Entity {i}: start={start_pos}, end={end_pos}, text='{entity_text}...'")
 
                     # 🔧 严格的边界检查
                     if start_pos >= seq_len:
-                        print(f"    🚨 Skipping entity {i}: start_pos {start_pos} >= seq_len {seq_len}")
-                        continue
+                        continue  # 跳过越界实体
 
                     if end_pos > seq_len:
-                        print(f"    ⚠️ Adjusting entity {i}: end_pos {end_pos} -> {seq_len}")
                         end_pos = seq_len
 
                     if start_pos >= end_pos:
-                        print(f"    🚨 Skipping entity {i}: invalid span ({start_pos}, {end_pos})")
-                        continue
+                        continue  # 跳过无效span
 
                     # Text representation
                     text_repr = entity['representation']
@@ -142,10 +132,8 @@ class GraphWriter(nn.Module):
                     # 🔧 成功创建节点，记录映射
                     valid_entity_mapping[i] = len(batch_node_features)
                     batch_node_features.append(node_feature)
-                    print(f"    ✅ Created node {len(batch_node_features)-1} for entity {i}")
 
                 except Exception as e:
-                    print(f"    ❌ Failed to create node for entity {i}: {e}")
                     continue
 
             # 🔧 处理节点特征 - 确保至少有一个节点
@@ -160,8 +148,6 @@ class GraphWriter(nn.Module):
             batch_node_features = torch.stack(batch_node_features)
             batch_node_features = self.layer_norm(batch_node_features)
             actual_nodes_created = batch_node_features.size(0)
-
-            print(f"  Final: created {actual_nodes_created} nodes for batch {b}")
 
             # 添加到总列表
             all_node_features.append(batch_node_features)
@@ -201,8 +187,6 @@ class GraphWriter(nn.Module):
                 all_edge_indices.extend(batch_edge_indices)
                 all_edge_types.extend(batch_edge_types)
 
-            print(f"  Created {valid_relations} valid relations + {actual_nodes_created} self-loops")
-
             # 🔧 创建batch_indices - 长度必须等于actual_nodes_created
             batch_indices = [b] * actual_nodes_created
             all_batch_indices.extend(batch_indices)
@@ -229,12 +213,19 @@ class GraphWriter(nn.Module):
         total_indices = batch_indices.size(0)
 
         print(f"🔧 GraphWriter Final Summary:")
+        print(f"  - all_node_features list length: {len(all_node_features)}")
+        print(f"  - all_batch_indices list length: {len(all_batch_indices)}")
         print(f"  - Total nodes created: {total_nodes}")
         print(f"  - Total batch indices: {total_indices}")
         print(f"  - Shapes match: {total_nodes == total_indices}")
 
+        # 详细分析不匹配的原因
         if total_nodes != total_indices:
             print(f"  ❌ CRITICAL MISMATCH: {total_nodes} nodes vs {total_indices} indices")
+            print(f"  - Node features per batch: {[nf.size(0) for nf in all_node_features]}")
+            print(f"  - Expected total from node features: {sum(nf.size(0) for nf in all_node_features)}")
+            print(f"  - Actual batch_indices length: {len(all_batch_indices)}")
+
             # 强制修复不匹配
             if total_indices > total_nodes:
                 batch_indices = batch_indices[:total_nodes]
